@@ -1,24 +1,7 @@
-# Extracted frames and archived runs
-screenshots/
-archive/
+# All project data (videos, screenshots, outputs, selections, session notes)
+projects/
 
-# Session recordings and transcripts
-*.mp4
-*.vtt
-
-# Issues markdown files (session-specific)
-# Description_template.md is safe — everything else is private data
-*[0-9]*.md
-
-# Selections / output state
-selections*.json
-
-# Generated decks (output)
-# video_template.pptx is safe — it's the template input
-*.pptx
-!generic_template.pptx
-
-# Active config (references private filenames; see README for schema)
+# Active project config (project-specific; copy from projects/<name>/config.json)
 config.json
 
 # Office temp files

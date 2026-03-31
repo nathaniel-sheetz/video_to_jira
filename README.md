@@ -8,7 +8,7 @@ Turns a usability-session recording into a structured PowerPoint issue report. G
 
 - Python 3.11+
 - Dependencies: `pip install python-pptx Pillow`
-- `config.json` present in the project root (see [Configuration](#configuration))
+- `config.json` present at the repo root (copy from `projects/<name>/config.json`; see [Configuration](#configuration))
 
 ---
 
@@ -102,19 +102,30 @@ Duplicates the template's first slide once per issue, fills all named shapes, in
 
 ---
 
+## Adding a new project
+
+1. Create `projects/<project-name>/` with three subfolders: `input/`, `screenshots/`, `output/`.
+2. Drop the video (`.mp4`) and optional `.vtt` into `input/`.
+3. Copy the config template below into `projects/<project-name>/config.json` and fill in the paths.
+4. Copy that config to the repo root to activate it: `cp projects/<project-name>/config.json config.json`.
+
+Everything under `projects/` is gitignored automatically. To switch between projects, copy the target project's `config.json` to the repo root.
+
+---
+
 ## Configuration
 
-`config.json` at the project root controls all scripts:
+`config.json` at the repo root controls all scripts. All paths are relative to the repo root.
 
 ```json
 {
-  "video_path":             "session.mp4",
-  "issues_path":            "session_issues.md",
-  "output_dir":             "screenshots",
+  "video_path":             "projects/<name>/input/session.mp4",
+  "issues_path":            "projects/<name>/session_issues.md",
+  "output_dir":             "projects/<name>/screenshots",
   "frame_offsets_seconds":  [0, 2, 5, 10, 20, 30],
   "template_path":          "generic_template.pptx",
-  "output_pptx":            "Output Report.pptx",
-  "selections_path":        "selections.json",
+  "output_pptx":            "projects/<name>/output/Report.pptx",
+  "selections_path":        "projects/<name>/selections.json",
   "server_port":            8765,
   "ffmpeg_path":            "ffmpeg"
 }
@@ -127,15 +138,20 @@ Duplicates the template's first slide once per issue, fills all named shapes, in
 ## File layout
 
 ```
-project/
-├── config.json                  # active run configuration
-├── Description_template.md      # issue markdown format reference
-├── generic_template.pptx        # slide template with named shapes
-├── clean_vtt.py                 # Step 1: strip VTT formatting
-├── extract_frames.py            # Step 3: extract JPEGs via ffmpeg
-├── build_review.py              # Step 4: browser-based review UI
-├── generate_pptx.py             # Step 5: assemble the deck
-├── selections.json              # saved screenshot picks (generated)
-├── screenshots/                 # extracted frames (gitignored)
-└── archive/                     # previous runs / reference files (gitignored)
+repo root/
+├── config.json                  # active project config (gitignored; copy from projects/<name>/)
+├── Description_template.md      # issue markdown format reference (tracked)
+├── generic_template.pptx        # slide template with named shapes (tracked)
+├── clean_vtt.py                 # Step 1: strip VTT formatting (tracked)
+├── extract_frames.py            # Step 3: extract JPEGs via ffmpeg (tracked)
+├── build_review.py              # Step 4: browser-based review UI (tracked)
+├── generate_pptx.py             # Step 5: assemble the deck (tracked)
+└── projects/                    # all project data — entirely gitignored
+    └── <project-name>/
+        ├── config.json          # project's saved config (copy to root to activate)
+        ├── <issues>.md          # issue descriptions
+        ├── selections.json      # saved screenshot picks
+        ├── input/               # source video, optional .vtt
+        ├── screenshots/         # extracted frames (created by extract_frames.py)
+        └── output/              # generated .pptx files
 ```
