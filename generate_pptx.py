@@ -307,6 +307,16 @@ def main():
         vid   = issue["id"]
         print(f"  [{i+1:02d}/{len(issues)}] {vid}  {issue['title'][:60]}")
 
+        # ── Apply text overrides from selections ──
+        TEXT_FIELDS = ("title", "severity", "observed", "expected", "notes")
+        sel = selections.get(vid)
+        metadata_override = None
+        if sel and isinstance(sel, dict):
+            for f in TEXT_FIELDS:
+                if f in sel:
+                    issue[f] = sel[f]
+            metadata_override = sel.get("metadata")
+
         # ── Text fields ──
         set_text(slide, "issue_id",       vid)
         sev_key = issue["severity"][:2]
@@ -320,11 +330,14 @@ def main():
         if issue["notes"]:
             set_bullets(slide, "notes", issue["notes"])
 
-        metadata = (
-            f"Roles: {issue['affected_roles']} | "
-            f"Area: {issue['affected_area']} | "
-            f"{issue['timestamps']}"
-        ).strip(" |")
+        if metadata_override:
+            metadata = metadata_override
+        else:
+            metadata = (
+                f"Roles: {issue['affected_roles']} | "
+                f"Area: {issue['affected_area']} | "
+                f"{issue['timestamps']}"
+            ).strip(" |")
         set_text(slide, "metadata", metadata)
 
         # ── Screenshot ──
