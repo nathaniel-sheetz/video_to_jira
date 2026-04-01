@@ -125,6 +125,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .chip.pending{background:#2a2a2a;color:#888}
 .chip.selected{background:#14391e;color:#4ade80;border-color:#22c55e}
 .chip.skipped{background:#3b1f00;color:#fb923c;border-color:#f97316}
+.chip.merged{background:#2a1a3e;color:#c084fc;border-color:#a855f7}
 .chip.active{outline:2px solid #60a5fa;outline-offset:2px}
 
 /* ── Main ── */
@@ -146,6 +147,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 #skip-btn{margin-top:22px;padding:8px 20px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:6px;cursor:pointer;font-size:13px;transition:background .15s}
 #skip-btn:hover{background:#333;color:#ccc}
+#split-merge-row{margin-top:10px;display:flex;gap:10px;flex-wrap:wrap}
+#split-btn{padding:8px 16px;background:#0e3a3a;color:#2dd4bf;border:1px solid #0d9488;border-radius:6px;cursor:pointer;font-size:13px;transition:background .15s}
+#split-btn:hover,#split-btn.active{background:#134e4a;border-color:#14b8a6;color:#5eead4}
+#merge-btn{padding:8px 16px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:6px;cursor:pointer;font-size:13px;transition:background .15s}
+#merge-btn:hover{background:#333;color:#ccc}
+#merge-row{margin-top:10px;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:#666}
+#merge-target-select{background:#1f1f1f;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:5px 8px;font-size:12px;cursor:pointer;max-width:340px}
+#merge-confirm-btn{padding:6px 14px;background:#7c1d1d;color:#fca5a5;border:1px solid #991b1b;border-radius:5px;cursor:pointer;font-size:12px}
+#merge-confirm-btn:hover{background:#991b1b}
+#merge-cancel-btn{padding:6px 14px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:5px;cursor:pointer;font-size:12px}
+#slide-b-section{margin-top:22px;border-top:1px solid #2a2a2a;padding-top:18px}
+#slide-b-header{font-size:12px;font-weight:700;color:#2dd4bf;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px}
+#slide-b-thumbnails{display:flex;flex-wrap:wrap;gap:14px}
+.thumb-item.slide-b-active{border-color:#2dd4bf !important}
+#slide-b-clear-btn{margin-top:12px;padding:6px 14px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:5px;cursor:pointer;font-size:12px}
+#merged-banner{margin-top:18px;padding:12px 16px;background:#1a0a2e;border:1px solid #7c3aed;border-radius:8px;font-size:13px;color:#c084fc}
+#unmerge-btn{margin-top:8px;padding:6px 14px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:5px;cursor:pointer;font-size:12px}
 
 /* ── Completion ── */
 #completion{display:none;padding:12px 18px;background:#0d2818;border:1px solid #166534;border-radius:8px;margin-top:22px;font-size:14px}
@@ -220,6 +238,31 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 
   <button id="skip-btn">Skip — no screenshot for this issue</button>
+
+  <div id="split-merge-row">
+    <button id="split-btn">Split &#8645; Add slide B</button>
+    <button id="merge-btn">Merge into&hellip;</button>
+  </div>
+
+  <div id="merge-row" style="display:none">
+    Merge this issue into:
+    <select id="merge-target-select"><option value="">— select target —</option></select>
+    <button id="merge-confirm-btn">Confirm merge</button>
+    <button id="merge-cancel-btn">Cancel</button>
+  </div>
+
+  <div id="slide-b-section" style="display:none">
+    <div id="slide-b-header">Slide B &mdash; select a second screenshot</div>
+    <div id="slide-b-thumbnails"></div>
+    <div id="slide-b-no-screenshots" style="display:none">No screenshots extracted for this issue.</div>
+    <button id="slide-b-clear-btn">&#10005; Remove slide B</button>
+  </div>
+
+  <div id="merged-banner" style="display:none">
+    This issue is merged into <strong id="merged-into-vid"></strong> — it will not generate its own slide.
+    <br><button id="unmerge-btn">Unmerge (restore as standalone slide)</button>
+  </div>
+
   <div id="completion">
     <span style="color:#4ade80;font-weight:700">&#10003; All issues reviewed</span>
     &nbsp;&mdash;&nbsp;
@@ -263,6 +306,7 @@ let sourceIssueIdx = 0;   // which issue's frames are displayed (may differ from
 let lbPath    = null;
 let lbImage   = new Image();
 let lbMode    = 'crop';   // 'crop' | 'draw'
+let lbContext = 'a';      // 'a' = main slide, 'b' = slide B
 
 // Crop state
 let cropStart = null, cropEnd = null, dragging = false;
@@ -283,7 +327,9 @@ const ctx    = canvas.getContext('2d');
 
 function getStatus(vid) {
   if (!(vid in selections)) return 'pending';
-  return selections[vid] === null ? 'skipped' : 'selected';
+  const sel = selections[vid];
+  if (sel && sel.merged_into) return 'merged';
+  return sel === null ? 'skipped' : 'selected';
 }
 
 function pendingCount() {
@@ -363,6 +409,35 @@ function renderThumbnails(issueIdx) {
   }
 }
 
+function renderSlideBThumbnails(vid, selectedPath) {
+  const issue    = ISSUES[currentIdx];
+  const thumbsEl = document.getElementById('slide-b-thumbnails');
+  const noSSEl   = document.getElementById('slide-b-no-screenshots');
+  thumbsEl.innerHTML = '';
+
+  const shots = issue.screenshots || [];
+  if (shots.length === 0) { noSSEl.style.display = 'block'; return; }
+  noSSEl.style.display = 'none';
+
+  shots.forEach((path, shotIdx) => {
+    const label = labelFromPath(path);
+    const item  = document.createElement('div');
+    item.className = 'thumb-item' + (path === selectedPath ? ' slide-b-active' : '');
+    item.innerHTML =
+      '<img src="/images?path=' + encodeURIComponent(path) + '" alt="' + label + '" loading="lazy">' +
+      '<div class="thumb-label">' + label + '</div>';
+    item.onclick = () => { lbContext = 'b'; openLightbox(shotIdx); };
+    item.addEventListener('mouseenter', e => {
+      hoverTimer = setTimeout(() => showHoverPreview(path, e), 300);
+    });
+    item.addEventListener('mouseleave', () => { clearTimeout(hoverTimer); hideHoverPreview(); });
+    item.addEventListener('mousemove', e => {
+      if (document.getElementById('hover-preview').style.display !== 'none') positionHoverPreview(e);
+    });
+    thumbsEl.appendChild(item);
+  });
+}
+
 function renderIssue() {
   const issue   = ISSUES[currentIdx];
   const pending = pendingCount();
@@ -377,6 +452,29 @@ function renderIssue() {
   sourceIssueIdx = currentIdx;
   renderThumbnails(currentIdx);
 
+  // Merged state
+  const sel      = selections[issue.id];
+  const isMerged = sel && sel.merged_into;
+  document.getElementById('merged-banner').style.display = isMerged ? '' : 'none';
+  if (isMerged) document.getElementById('merged-into-vid').textContent = sel.merged_into;
+  document.getElementById('skip-btn').disabled  = !!isMerged;
+  document.getElementById('split-btn').disabled = !!isMerged;
+  document.getElementById('merge-btn').disabled = !!isMerged;
+
+  // Split state
+  const hasSlideB = sel && typeof sel === 'object' && sel.slide_b;
+  const slideBSection = document.getElementById('slide-b-section');
+  if (hasSlideB) {
+    slideBSection.style.display = '';
+    document.getElementById('split-btn').textContent = 'Split \u21c5 Remove slide B';
+    document.getElementById('split-btn').classList.add('active');
+    renderSlideBThumbnails(issue.id, sel.slide_b.path);
+  } else {
+    slideBSection.style.display = 'none';
+    document.getElementById('split-btn').textContent = 'Split \u21c5 Add slide B';
+    document.getElementById('split-btn').classList.remove('active');
+  }
+
   const completionEl = document.getElementById('completion');
   if (pending === 0) {
     completionEl.classList.add('visible');
@@ -388,8 +486,10 @@ function renderIssue() {
 function navigateTo(idx) {
   currentIdx = idx;
   sourceIssueIdx = idx;
+  lbContext = 'a';
   document.getElementById('other-issue-select').value = '';
   document.getElementById('source-bar').style.display = 'none';
+  document.getElementById('merge-row').style.display = 'none';
   renderNav();
   renderIssue();
 }
@@ -694,10 +794,32 @@ async function saveAndAdvance(vid, payload) {
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify(payload),
   });
-  selections[vid] = payload.skip ? null : { path: payload.path, crop: payload.crop };
+  // Preserve existing slide_b when updating slide A
+  const existing = selections[vid];
+  const entry = payload.skip ? null : { path: payload.path, crop: payload.crop };
+  if (entry && existing && typeof existing === 'object' && existing.slide_b) {
+    entry.slide_b = existing.slide_b;
+  }
+  selections[vid] = entry;
   closeLightbox();
+  lbContext = 'a';
   const next = nextPendingIdx();
   navigateTo(next === -1 ? currentIdx : next);
+}
+
+async function saveSlideBAndClose(vid, path, crop) {
+  const slideB = { path, crop };
+  await fetch('/save', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ vid, slide_b: slideB }),
+  });
+  if (!selections[vid] || typeof selections[vid] !== 'object') selections[vid] = {};
+  selections[vid].slide_b = slideB;
+  closeLightbox();
+  lbContext = 'a';
+  renderSlideBThumbnails(vid, path);
+  renderNav();
 }
 
 document.getElementById('continue-btn').onclick = async () => {
@@ -710,10 +832,18 @@ document.getElementById('continue-btn').onclick = async () => {
       body:    JSON.stringify({ vid, image_b64: b64 }),
     });
     const { path: annotatedPath } = await res.json();
-    await saveAndAdvance(vid, { vid, path: annotatedPath, crop: null });
+    if (lbContext === 'b') {
+      await saveSlideBAndClose(vid, annotatedPath, null);
+    } else {
+      await saveAndAdvance(vid, { vid, path: annotatedPath, crop: null });
+    }
   } else {
-    // In crop mode getCrop() is valid; in draw mode use the locked drawCrop
-    await saveAndAdvance(vid, { vid, path: lbPath, crop: drawCrop || getCrop() });
+    const crop = drawCrop || getCrop();
+    if (lbContext === 'b') {
+      await saveSlideBAndClose(vid, lbPath, crop);
+    } else {
+      await saveAndAdvance(vid, { vid, path: lbPath, crop });
+    }
   }
 };
 
@@ -785,6 +915,92 @@ document.getElementById('other-issue-select').onchange = function() {
 };
 
 document.getElementById('source-reset-btn').onclick = resetSourceIssue;
+
+// ── Split ─────────────────────────────────────────────────────────────────
+
+document.getElementById('split-btn').onclick = async () => {
+  const vid = ISSUES[currentIdx].id;
+  const slideBSection = document.getElementById('slide-b-section');
+  const isActive = slideBSection.style.display !== 'none';
+  if (isActive) {
+    slideBSection.style.display = 'none';
+    document.getElementById('split-btn').textContent = 'Split \u21c5 Add slide B';
+    document.getElementById('split-btn').classList.remove('active');
+    await fetch('/save', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ vid, remove_slide_b: true }),
+    });
+    const sel = selections[vid];
+    if (sel && typeof sel === 'object') delete sel.slide_b;
+  } else {
+    slideBSection.style.display = '';
+    document.getElementById('split-btn').textContent = 'Split \u21c5 Remove slide B';
+    document.getElementById('split-btn').classList.add('active');
+    renderSlideBThumbnails(vid, null);
+  }
+};
+
+document.getElementById('slide-b-clear-btn').onclick = () => {
+  document.getElementById('split-btn').click();
+};
+
+// ── Merge ─────────────────────────────────────────────────────────────────
+
+function populateMergeTargetSelect() {
+  const sel = document.getElementById('merge-target-select');
+  sel.innerHTML = '<option value="">— select target —</option>';
+  const currentVid = ISSUES[currentIdx].id;
+  ISSUES.forEach(issue => {
+    if (issue.id === currentVid) return;
+    const s = selections[issue.id];
+    if (s && s.merged_into) return; // don't offer already-merged issues as targets
+    const opt = document.createElement('option');
+    opt.value = issue.id;
+    opt.textContent = issue.id + ' \u2014 ' + issue.title;
+    sel.appendChild(opt);
+  });
+}
+
+document.getElementById('merge-btn').onclick = () => {
+  const mergeRow = document.getElementById('merge-row');
+  const isVisible = mergeRow.style.display === 'flex';
+  mergeRow.style.display = isVisible ? 'none' : 'flex';
+  if (!isVisible) populateMergeTargetSelect();
+};
+
+document.getElementById('merge-confirm-btn').onclick = async () => {
+  const targetVid = document.getElementById('merge-target-select').value;
+  if (!targetVid) return;
+  const vid = ISSUES[currentIdx].id;
+  await fetch('/save', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ vid, merged_into: targetVid }),
+  });
+  selections[vid] = { merged_into: targetVid };
+  document.getElementById('merge-row').style.display = 'none';
+  renderNav();
+  renderIssue();
+  const next = nextPendingIdx();
+  if (next !== -1) navigateTo(next);
+};
+
+document.getElementById('merge-cancel-btn').onclick = () => {
+  document.getElementById('merge-row').style.display = 'none';
+};
+
+document.getElementById('unmerge-btn').onclick = async () => {
+  const vid = ISSUES[currentIdx].id;
+  await fetch('/save', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ vid, path: null, crop: null }),
+  });
+  selections[vid] = { path: null, crop: null };
+  renderNav();
+  renderIssue();
+};
 
 // ── Init ──────────────────────────────────────────────────────────────────
 
@@ -874,10 +1090,30 @@ class ReviewHandler(BaseHTTPRequestHandler):
         body   = json.loads(self.rfile.read(length))
         sels   = load_selections(self.config["selections_path"])
         vid    = body["vid"]
-        if body.get("skip"):
+
+        if "merged_into" in body:
+            sels[vid] = {"merged_into": body["merged_into"]}
+        elif "slide_b" in body:
+            existing = sels.get(vid)
+            if not isinstance(existing, dict) or existing.get("merged_into"):
+                existing = {}
+            existing["slide_b"] = body["slide_b"]
+            sels[vid] = existing
+        elif body.get("remove_slide_b"):
+            existing = sels.get(vid)
+            if isinstance(existing, dict):
+                existing.pop("slide_b", None)
+                sels[vid] = existing
+        elif body.get("skip"):
             sels[vid] = None
         else:
-            sels[vid] = {"path": body["path"], "crop": body.get("crop")}
+            # Normal save — preserve existing slide_b if present
+            existing = sels.get(vid)
+            entry = {"path": body["path"], "crop": body.get("crop")}
+            if isinstance(existing, dict) and "slide_b" in existing:
+                entry["slide_b"] = existing["slide_b"]
+            sels[vid] = entry
+
         save_selections(self.config["selections_path"], sels)
         self._send_json({"ok": True})
 

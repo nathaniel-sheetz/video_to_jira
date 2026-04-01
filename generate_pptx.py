@@ -270,6 +270,53 @@ def insert_screenshot(slide, shape_name, image_path, crop=None):
 # Entry point
 # ---------------------------------------------------------------------------
 
+def render_slide(prs, issue, sel):
+    """Duplicate the template slide and populate it from issue + sel overrides."""
+    slide = duplicate_slide(prs, template_idx=0)
+    vid   = issue["id"]
+
+    # Apply text overrides from sel onto a working copy of the issue fields
+    TEXT_FIELDS = ("title", "severity", "observed", "expected", "notes")
+    data = dict(issue)
+    if sel and isinstance(sel, dict):
+        for f in TEXT_FIELDS:
+            if f in sel:
+                data[f] = sel[f]
+
+    # ── Text fields ──
+    set_text(slide, "issue_id",       vid)
+    sev_key = data["severity"][:2] if data["severity"] else ""
+    set_text(slide, "severity_badge", sev_key)
+    if sev_key in SEVERITY_COLORS:
+        set_font_color(slide, "severity_badge", SEVERITY_COLORS[sev_key])
+    set_text(slide, "title", data["title"])
+
+    set_bullets(slide, "observed", data["observed"])
+    set_bullets(slide, "expected", data["expected"])
+    if data["notes"]:
+        set_bullets(slide, "notes", data["notes"])
+
+    metadata_override = sel.get("metadata") if sel and isinstance(sel, dict) else None
+    if metadata_override:
+        metadata = metadata_override
+    else:
+        metadata = (
+            f"Roles: {issue['affected_roles']} | "
+            f"Area: {issue['affected_area']} | "
+            f"{issue['timestamps']}"
+        ).strip(" |")
+    set_text(slide, "metadata", metadata)
+
+    # ── Screenshot ──
+    if sel and isinstance(sel, dict) and sel.get("path"):
+        img_path = sel["path"]
+        crop     = sel.get("crop")
+        if os.path.exists(img_path):
+            insert_screenshot(slide, "screenshot", img_path, crop)
+        else:
+            print(f"    [WARN] Image not found: {img_path}")
+
+
 def main():
     if not os.path.exists(CONFIG_FILE):
         sys.exit(f"Config not found: {CONFIG_FILE}")
@@ -302,46 +349,32 @@ def main():
 
     print("Generating slides...")
 
-    for i, issue in enumerate(issues):
-        slide = duplicate_slide(prs, template_idx=0)
-        vid   = issue["id"]
-        print(f"  [{i+1:02d}/{len(issues)}] {vid}  {issue['title'][:60]}")
+    slide_count = 0
+    for issue in issues:
+        vid = issue["id"]
+        sel = selections.get(vid) or {}
 
-        # ── Text fields ──
-        set_text(slide, "issue_id",       vid)
-        sev_key = issue["severity"][:2]
-        set_text(slide, "severity_badge", sev_key)
-        if sev_key in SEVERITY_COLORS:
-            set_font_color(slide, "severity_badge", SEVERITY_COLORS[sev_key])
-        set_text(slide, "title",          issue["title"])
+        if sel.get("merged_into"):
+            print(f"  [SKIP] {vid} — merged into {sel['merged_into']}")
+            continue
 
-        set_bullets(slide, "observed", issue["observed"])
-        set_bullets(slide, "expected", issue["expected"])
-        if issue["notes"]:
-            set_bullets(slide, "notes", issue["notes"])
+        print(f"  [{slide_count+1:02d}] {vid}  {issue['title'][:60]}")
+        render_slide(prs, issue, sel)
+        slide_count += 1
 
-        metadata = (
-            f"Roles: {issue['affected_roles']} | "
-            f"Area: {issue['affected_area']} | "
-            f"{issue['timestamps']}"
-        ).strip(" |")
-        set_text(slide, "metadata", metadata)
-
-        # ── Screenshot ──
-        sel = selections.get(vid)
-        if sel and isinstance(sel, dict) and sel.get("path"):
-            img_path = sel["path"]
-            crop     = sel.get("crop")
-            if os.path.exists(img_path):
-                insert_screenshot(slide, "screenshot", img_path, crop)
-            else:
-                print(f"    [WARN] Image not found: {img_path}")
+        slide_b = sel.get("slide_b")
+        if slide_b and isinstance(slide_b, dict):
+            merged_b = {k: v for k, v in sel.items() if k != "slide_b"}
+            merged_b.update(slide_b)
+            print(f"  [{slide_count+1:02d}] {vid}b (split slide)")
+            render_slide(prs, issue, merged_b)
+            slide_count += 1
 
     # Remove the original template slide (index 0)
     prs.slides._sldIdLst.remove(prs.slides._sldIdLst[0])
 
     prs.save(output_path)
-    print(f"\nSaved: {output_path}  ({len(issues)} slides)")
+    print(f"\nSaved: {output_path}  ({slide_count} slides)")
 
 
 if __name__ == "__main__":
