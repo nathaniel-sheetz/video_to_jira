@@ -275,7 +275,6 @@ def render_slide(prs, issue, sel):
     slide = duplicate_slide(prs, template_idx=0)
     vid   = issue["id"]
 
-    # Apply text overrides from sel onto a working copy of the issue fields
     TEXT_FIELDS = ("title", "severity", "observed", "expected", "notes")
     data = dict(issue)
     if sel and isinstance(sel, dict):
@@ -283,7 +282,6 @@ def render_slide(prs, issue, sel):
             if f in sel:
                 data[f] = sel[f]
 
-    # ── Text fields ──
     set_text(slide, "issue_id",       vid)
     sev_key = data["severity"][:2] if data["severity"] else ""
     set_text(slide, "severity_badge", sev_key)
@@ -307,7 +305,6 @@ def render_slide(prs, issue, sel):
         ).strip(" |")
     set_text(slide, "metadata", metadata)
 
-    # ── Screenshot ──
     if sel and isinstance(sel, dict) and sel.get("path"):
         img_path = sel["path"]
         crop     = sel.get("crop")

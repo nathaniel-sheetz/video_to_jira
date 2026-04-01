@@ -4,12 +4,10 @@ build_review.py  —  Step 5: Screenshot review UI.
 
 Starts a local HTTP server and opens the review tool in your browser.
   - Navigate between issues via the top nav bar
-  - Click a thumbnail to open it full-size in a lightbox
-  - Hover over a thumbnail for a quick 480px preview (300 ms delay)
-  - Use ← → buttons (or arrow keys) to cycle frames within an issue
-  - Drag on the image to set an optional crop region
-  - Click "Draw →" (appears after a valid crop) to annotate with a pen
-  - Click Continue to save your selection and advance to the next issue
+  - Click a thumbnail in the strip to select it as the pending screenshot
+  - Click the large main image to open it in the lightbox for crop/draw
+  - Edit title, severity, observed, expected, notes, and metadata inline
+  - Click Validate & Next to save all edits and advance to the next issue
   - Click Skip to mark an issue with no screenshot
   - All progress is written to selections.json automatically
 
@@ -31,7 +29,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 CONFIG_FILE = "config.json"
 
 # ---------------------------------------------------------------------------
-# Markdown parser  (shared with extract_frames.py)
+# Markdown parser  (extended: parses all text fields needed by the UI)
 # ---------------------------------------------------------------------------
 
 def parse_issues(md_path):
@@ -52,21 +50,40 @@ def parse_issues(md_path):
             continue
 
         issue = {
-            "id": header.group(1),
-            "title": header.group(2).strip(),
-            "severity": "",
-            "timestamps": "",
+            "id":             header.group(1),
+            "title":          header.group(2).strip(),
+            "severity":       "",
+            "timestamps":     "",
+            "affected_roles": "",
+            "affected_area":  "",
+            "observed":       "",
+            "expected":       "",
+            "notes":          "",
         }
 
-        for line in lines[1:15]:
+        for line in lines[1:20]:
             m = re.match(r"-\s+\*\*(.+?):\*\*\s*(.*)", line)
             if m:
                 key = m.group(1).strip().lower()
                 val = m.group(2).strip()
-                if key == "severity":
-                    issue["severity"] = val
-                elif key == "timestamps":
-                    issue["timestamps"] = val
+                mapping = {
+                    "severity":       "severity",
+                    "timestamps":     "timestamps",
+                    "affected roles": "affected_roles",
+                    "affected area":  "affected_area",
+                }
+                if key in mapping:
+                    issue[mapping[key]] = val
+
+        for field, heading in [
+            ("observed", "Observed behavior"),
+            ("expected", "Expected behavior"),
+            ("notes",    "Notes"),
+        ]:
+            pat = rf"## {re.escape(heading)}\n(.*?)(?=\n## |\Z)"
+            m = re.search(pat, section, re.DOTALL | re.IGNORECASE)
+            if m:
+                issue[field] = m.group(1).strip()
 
         issues.append(issue)
 
@@ -130,24 +147,51 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 /* ── Main ── */
 #main{margin-top:62px;padding:28px 28px 60px;max-width:1300px;margin-left:auto;margin-right:auto}
-#issue-header{margin-bottom:22px}
-#issue-id{font-size:12px;font-weight:700;color:#60a5fa;text-transform:uppercase;letter-spacing:.08em}
-#issue-title{font-size:20px;font-weight:600;margin-top:4px;line-height:1.3}
-#issue-severity{font-size:12px;color:#f87171;margin-top:5px}
-#progress-line{font-size:12px;color:#666;margin-top:3px}
 
-/* ── Thumbnails ── */
-#thumbnails{display:flex;flex-wrap:wrap;gap:14px;margin-top:18px}
-.thumb-item{cursor:pointer;border:2px solid #2a2a2a;border-radius:8px;overflow:hidden;transition:border-color .15s;position:relative;flex-shrink:0}
-.thumb-item:hover{border-color:#60a5fa}
-.thumb-item img{display:block;width:220px;height:138px;object-fit:cover;background:#222}
-.thumb-label{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.72);font-size:10px;padding:4px 7px;color:#bbb}
+/* ── Issue header ── */
+#issue-header{margin-bottom:18px}
+#issue-id{font-size:12px;font-weight:700;color:#60a5fa;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+#edit-title{font-size:18px;font-weight:600;background:#1f1f1f;color:#e0e0e0;border:1px solid #3a3a3a;border-radius:6px;padding:6px 10px;width:100%;font-family:inherit}
+#edit-title:focus{outline:none;border-color:#60a5fa}
+#header-row2{display:flex;align-items:center;gap:12px;margin-top:8px}
+#edit-severity{background:#1f1f1f;color:#f87171;border:1px solid #3a3a3a;border-radius:6px;padding:5px 8px;font-size:13px;cursor:pointer;font-family:inherit}
+#edit-severity:focus{outline:none;border-color:#60a5fa}
+#progress-line{font-size:12px;color:#666}
 
+/* ── Screenshot section ── */
+#screenshot-section{display:flex;gap:16px;margin-top:18px;align-items:flex-start}
+#main-shot{flex:1;min-width:0;background:#111;border:1px solid #2a2a2a;border-radius:8px;overflow:hidden;cursor:pointer;max-height:480px;display:flex;align-items:center;justify-content:center}
+#main-shot img{max-width:100%;max-height:480px;object-fit:contain;display:block}
+#main-shot-empty{color:#555;font-size:13px;padding:40px 20px;text-align:center}
+#thumb-strip{width:190px;flex-shrink:0;max-height:480px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+.strip-item{border:2px solid #2a2a2a;border-radius:6px;overflow:hidden;cursor:pointer;flex-shrink:0;position:relative}
+.strip-item:hover{border-color:#60a5fa}
+.strip-item.active{border-color:#22c55e}
+.strip-item img{display:block;width:100%;height:auto}
+.strip-label{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.72);font-size:9px;padding:3px 5px;color:#bbb}
 #no-screenshots{color:#555;padding:20px 0;font-size:14px}
 
-#skip-btn{margin-top:22px;padding:8px 20px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:6px;cursor:pointer;font-size:13px;transition:background .15s}
+/* ── Source bar ── */
+#source-bar{display:none;margin-top:12px;padding:8px 12px;background:#1a1a2e;border:1px solid #3b3b8a;border-radius:6px;font-size:12px;color:#818cf8;align-items:center;gap:8px}
+#source-bar strong{color:#a5b4fc}
+#source-reset-btn{margin-left:auto;background:none;border:1px solid #3b3b8a;color:#818cf8;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px}
+#other-issue-row{margin-top:12px;display:flex;align-items:center;gap:10px}
+#other-issue-row span{font-size:12px;color:#666}
+#other-issue-select{background:#1f1f1f;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:5px 8px;font-size:12px;cursor:pointer;max-width:340px}
+
+/* ── Fields section ── */
+#fields-section{margin-top:22px;display:flex;flex-direction:column;gap:16px}
+.field-group{display:flex;flex-direction:column;gap:6px}
+.field-group label{font-size:11px;font-weight:700;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em}
+.field-group textarea,.field-group input[type=text]{background:#1f1f1f;color:#e0e0e0;border:1px solid #3a3a3a;border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;line-height:1.5}
+.field-group textarea:focus,.field-group input:focus{outline:none;border-color:#60a5fa}
+
+/* ── Action row ── */
+#action-row{display:flex;gap:12px;margin-top:24px;padding-bottom:40px}
+#validate-btn{padding:10px 28px;background:#1d4ed8;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer}
+#validate-btn:hover{background:#2563eb}
+#skip-btn{padding:8px 20px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:6px;cursor:pointer;font-size:13px;transition:background .15s}
 #skip-btn:hover{background:#333;color:#ccc}
-#split-merge-row{margin-top:10px;display:flex;gap:10px;flex-wrap:wrap}
 #split-btn{padding:8px 16px;background:#0e3a3a;color:#2dd4bf;border:1px solid #0d9488;border-radius:6px;cursor:pointer;font-size:13px;transition:background .15s}
 #split-btn:hover,#split-btn.active{background:#134e4a;border-color:#14b8a6;color:#5eead4}
 #merge-btn{padding:8px 16px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:6px;cursor:pointer;font-size:13px;transition:background .15s}
@@ -158,10 +202,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #merge-confirm-btn:hover{background:#991b1b}
 #merge-cancel-btn{padding:6px 14px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:5px;cursor:pointer;font-size:12px}
 #slide-b-section{margin-top:22px;border-top:1px solid #2a2a2a;padding-top:18px}
-#slide-b-header{font-size:12px;font-weight:700;color:#2dd4bf;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px}
-#slide-b-thumbnails{display:flex;flex-wrap:wrap;gap:14px}
-.thumb-item.slide-b-active{border-color:#2dd4bf !important}
-#slide-b-clear-btn{margin-top:12px;padding:6px 14px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:5px;cursor:pointer;font-size:12px}
+#slide-b-header{font-size:12px;font-weight:700;color:#2dd4bf;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+#slide-b-shot-row{display:flex;gap:16px;align-items:flex-start}
+#slide-b-main-shot{flex:1;min-width:0;background:#111;border:1px solid #2a2a2a;border-radius:8px;overflow:hidden;cursor:pointer;max-height:320px;display:flex;align-items:center;justify-content:center}
+#slide-b-main-shot img{max-width:100%;max-height:320px;object-fit:contain;display:block}
+#slide-b-main-shot-empty{color:#555;font-size:12px;padding:30px 16px;text-align:center}
+#slide-b-strip{width:150px;flex-shrink:0;max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.strip-item.slide-b-active{border-color:#2dd4bf !important}
+#slide-b-clear-btn{margin-top:10px;padding:6px 14px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:5px;cursor:pointer;font-size:12px}
 #merged-banner{margin-top:18px;padding:12px 16px;background:#1a0a2e;border:1px solid #7c3aed;border-radius:8px;font-size:13px;color:#c084fc}
 #unmerge-btn{margin-top:8px;padding:6px 14px;background:#262626;color:#888;border:1px solid #3a3a3a;border-radius:5px;cursor:pointer;font-size:12px}
 
@@ -199,13 +247,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #clear-btn:hover{background:#333}
 #cancel-btn{background:#2a2a2a;color:#999;border:1px solid #3a3a3a}
 #cancel-btn:hover{background:#333}
-
-#source-bar{display:none;margin-top:12px;padding:8px 12px;background:#1a1a2e;border:1px solid #3b3b8a;border-radius:6px;font-size:12px;color:#818cf8;align-items:center;gap:8px}
-#source-bar strong{color:#a5b4fc}
-#source-reset-btn{margin-left:auto;background:none;border:1px solid #3b3b8a;color:#818cf8;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px}
-#other-issue-row{margin-top:12px;display:flex;align-items:center;gap:10px}
-#other-issue-row span{font-size:12px;color:#666}
-#other-issue-select{background:#1f1f1f;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:5px 8px;font-size:12px;cursor:pointer;max-width:340px}
 </style>
 </head>
 <body>
@@ -215,11 +256,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div id="main">
   <div id="issue-header">
     <div id="issue-id"></div>
-    <div id="issue-title"></div>
-    <div id="issue-severity"></div>
-    <div id="progress-line"></div>
+    <input type="text" id="edit-title" placeholder="Issue title">
+    <div id="header-row2">
+      <select id="edit-severity">
+        <option value="S0 &ndash; Blocker">S0 &ndash; Blocker</option>
+        <option value="S1 &ndash; Critical">S1 &ndash; Critical</option>
+        <option value="S2 &ndash; Major">S2 &ndash; Major</option>
+        <option value="S3 &ndash; Minor">S3 &ndash; Minor</option>
+      </select>
+      <div id="progress-line"></div>
+    </div>
   </div>
-  <div id="thumbnails"></div>
+
+  <div id="screenshot-section">
+    <div id="main-shot">
+      <img id="main-shot-img" src="" alt="">
+      <div id="main-shot-empty">No screenshot selected &mdash; choose from the strip &rarr;</div>
+    </div>
+    <div id="thumb-strip"></div>
+  </div>
+
   <div id="no-screenshots" style="display:none">No screenshots extracted for this issue. Run extract_frames.py first.</div>
 
   <!-- Banner shown when viewing a borrowed issue's frames -->
@@ -233,13 +289,32 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div id="other-issue-row">
     <span>Browse frames from another issue:</span>
     <select id="other-issue-select">
-      <option value="">— select —</option>
+      <option value="">&mdash; select &mdash;</option>
     </select>
   </div>
 
-  <button id="skip-btn">Skip — no screenshot for this issue</button>
+  <div id="fields-section">
+    <div class="field-group">
+      <label for="edit-observed">Observed behavior</label>
+      <textarea id="edit-observed" rows="4" placeholder="Observed behavior..."></textarea>
+    </div>
+    <div class="field-group">
+      <label for="edit-expected">Expected behavior</label>
+      <textarea id="edit-expected" rows="3" placeholder="Expected behavior..."></textarea>
+    </div>
+    <div class="field-group">
+      <label for="edit-notes">Notes</label>
+      <textarea id="edit-notes" rows="3" placeholder="Notes..."></textarea>
+    </div>
+    <div class="field-group">
+      <label for="edit-metadata">Metadata</label>
+      <input type="text" id="edit-metadata" placeholder="Roles: ... | Area: ... | ...">
+    </div>
+  </div>
 
-  <div id="split-merge-row">
+  <div id="action-row">
+    <button id="validate-btn">Validate &amp; Next &#8594;</button>
+    <button id="skip-btn">Skip &mdash; no screenshot</button>
     <button id="split-btn">Split &#8645; Add slide B</button>
     <button id="merge-btn">Merge into&hellip;</button>
   </div>
@@ -252,14 +327,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 
   <div id="slide-b-section" style="display:none">
-    <div id="slide-b-header">Slide B &mdash; select a second screenshot</div>
-    <div id="slide-b-thumbnails"></div>
-    <div id="slide-b-no-screenshots" style="display:none">No screenshots extracted for this issue.</div>
+    <div id="slide-b-header">Slide B &mdash; second screenshot</div>
+    <div id="slide-b-shot-row">
+      <div id="slide-b-main-shot">
+        <img id="slide-b-main-img" src="" style="display:none" alt="">
+        <div id="slide-b-main-shot-empty">Select a frame from the strip</div>
+      </div>
+      <div id="slide-b-strip"></div>
+    </div>
+    <div id="slide-b-no-screenshots" style="display:none;color:#555;padding:12px 0;font-size:13px">No screenshots extracted for this issue.</div>
     <button id="slide-b-clear-btn">&#10005; Remove slide B</button>
   </div>
 
   <div id="merged-banner" style="display:none">
-    This issue is merged into <strong id="merged-into-vid"></strong> — it will not generate its own slide.
+    This issue is merged into <strong id="merged-into-vid"></strong> &mdash; it will not generate its own slide.
     <br><button id="unmerge-btn">Unmerge (restore as standalone slide)</button>
   </div>
 
@@ -302,6 +383,12 @@ let currentIdx     = 0;
 let currentShotIdx = 0;
 let sourceIssueIdx = 0;   // which issue's frames are displayed (may differ from currentIdx)
 
+// Pending screenshot (selected on this page, not yet persisted)
+let pendingPath  = null;
+let pendingCrop  = null;
+let pendingPathB = null;
+let pendingCropB = null;
+
 // Lightbox state
 let lbPath    = null;
 let lbImage   = new Image();
@@ -329,7 +416,8 @@ function getStatus(vid) {
   if (!(vid in selections)) return 'pending';
   const sel = selections[vid];
   if (sel && sel.merged_into) return 'merged';
-  return sel === null ? 'skipped' : 'selected';
+  if (!sel || !sel.path) return 'skipped';
+  return 'selected';
 }
 
 function pendingCount() {
@@ -367,99 +455,146 @@ function renderNav() {
   });
 }
 
-// ── Issue panel ───────────────────────────────────────────────────────────
+// ── Main shot ────────────────────────────────────────────────────────────
 
-function renderThumbnails(issueIdx) {
-  const thumbsEl = document.getElementById('thumbnails');
-  const noSSEl   = document.getElementById('no-screenshots');
-  thumbsEl.innerHTML = '';
-
-  const shots = (ISSUES[issueIdx].screenshots) || [];
-  if (shots.length === 0) {
-    noSSEl.style.display = 'block';
+function updateMainShot() {
+  const img     = document.getElementById('main-shot-img');
+  const emptyEl = document.getElementById('main-shot-empty');
+  if (pendingPath) {
+    img.src              = '/images?path=' + encodeURIComponent(pendingPath);
+    img.style.display    = '';
+    emptyEl.style.display = 'none';
   } else {
-    noSSEl.style.display = 'none';
-    shots.forEach((path, shotIdx) => {
-      const label = labelFromPath(path);
-
-      const item = document.createElement('div');
-      item.className = 'thumb-item';
-      item.innerHTML =
-        '<img src="/images?path=' + encodeURIComponent(path) + '" alt="' + label + '" loading="lazy">' +
-        '<div class="thumb-label">' + label + '</div>';
-
-      item.onclick = () => openLightbox(shotIdx);
-
-      // Hover preview
-      item.addEventListener('mouseenter', e => {
-        hoverTimer = setTimeout(() => showHoverPreview(path, e), 300);
-      });
-      item.addEventListener('mouseleave', () => {
-        clearTimeout(hoverTimer);
-        hideHoverPreview();
-      });
-      item.addEventListener('mousemove', e => {
-        if (document.getElementById('hover-preview').style.display !== 'none') {
-          positionHoverPreview(e);
-        }
-      });
-
-      thumbsEl.appendChild(item);
-    });
+    img.src              = '';
+    img.style.display    = 'none';
+    emptyEl.style.display = '';
   }
 }
 
-function renderSlideBThumbnails(vid, selectedPath) {
-  const issue    = ISSUES[currentIdx];
-  const thumbsEl = document.getElementById('slide-b-thumbnails');
-  const noSSEl   = document.getElementById('slide-b-no-screenshots');
-  thumbsEl.innerHTML = '';
+// ── Thumb strip ──────────────────────────────────────────────────────────
 
-  const shots = issue.screenshots || [];
-  if (shots.length === 0) { noSSEl.style.display = 'block'; return; }
-  noSSEl.style.display = 'none';
+function renderThumbStrip(issueIdx) {
+  const stripEl = document.getElementById('thumb-strip');
+  const noSSEl  = document.getElementById('no-screenshots');
+  stripEl.innerHTML = '';
+
+  const shots = (ISSUES[issueIdx] && ISSUES[issueIdx].screenshots) || [];
+  if (shots.length === 0) {
+    noSSEl.style.display  = 'block';
+    stripEl.style.display = 'none';
+    return;
+  }
+
+  noSSEl.style.display  = 'none';
+  stripEl.style.display = '';
 
   shots.forEach((path, shotIdx) => {
     const label = labelFromPath(path);
     const item  = document.createElement('div');
-    item.className = 'thumb-item' + (path === selectedPath ? ' slide-b-active' : '');
+    item.className = 'strip-item' + (path === pendingPath ? ' active' : '');
     item.innerHTML =
       '<img src="/images?path=' + encodeURIComponent(path) + '" alt="' + label + '" loading="lazy">' +
-      '<div class="thumb-label">' + label + '</div>';
-    item.onclick = () => { lbContext = 'b'; openLightbox(shotIdx); };
+      '<div class="strip-label">' + label + '</div>';
+
+    item.onclick = () => {
+      pendingPath    = path;
+      pendingCrop    = null;
+      currentShotIdx = shotIdx;
+      updateMainShot();
+      stripEl.querySelectorAll('.strip-item').forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+    };
+
+    // Hover preview
     item.addEventListener('mouseenter', e => {
       hoverTimer = setTimeout(() => showHoverPreview(path, e), 300);
     });
-    item.addEventListener('mouseleave', () => { clearTimeout(hoverTimer); hideHoverPreview(); });
-    item.addEventListener('mousemove', e => {
-      if (document.getElementById('hover-preview').style.display !== 'none') positionHoverPreview(e);
+    item.addEventListener('mouseleave', () => {
+      clearTimeout(hoverTimer);
+      hideHoverPreview();
     });
-    thumbsEl.appendChild(item);
+    item.addEventListener('mousemove', e => {
+      if (document.getElementById('hover-preview').style.display !== 'none') {
+        positionHoverPreview(e);
+      }
+    });
+
+    stripEl.appendChild(item);
   });
 }
 
+// ── Issue panel ───────────────────────────────────────────────────────────
+
 function renderIssue() {
-  const issue   = ISSUES[currentIdx];
-  const pending = pendingCount();
-  const done    = ISSUES.length - pending;
+  const issue = ISSUES[currentIdx];
+  const vid   = issue.id;
+  const sel   = selections[vid];
+  const done  = ISSUES.length - pendingCount();
 
   document.getElementById('issue-id').textContent       = issue.id;
-  document.getElementById('issue-title').textContent    = issue.title;
-  document.getElementById('issue-severity').textContent = issue.severity;
-  document.getElementById('progress-line').textContent  =
-    `${done} of ${ISSUES.length} reviewed`;
+  document.getElementById('progress-line').textContent  = done + ' of ' + ISSUES.length + ' reviewed';
+
+  // Title
+  document.getElementById('edit-title').value =
+    (sel && sel.title != null) ? sel.title : (issue.title || '');
+
+  // Severity — ensure the value exists as an option before selecting it
+  const sevEl  = document.getElementById('edit-severity');
+  const sevVal = (sel && sel.severity != null) ? sel.severity : (issue.severity || '');
+  let found = false;
+  for (let i = 0; i < sevEl.options.length; i++) {
+    if (sevEl.options[i].value === sevVal) { found = true; break; }
+  }
+  if (!found && sevVal) {
+    const opt       = document.createElement('option');
+    opt.value       = sevVal;
+    opt.textContent = sevVal;
+    sevEl.insertBefore(opt, sevEl.firstChild);
+  }
+  sevEl.value = sevVal;
+
+  // Text fields
+  document.getElementById('edit-observed').value =
+    (sel && sel.observed != null) ? sel.observed : (issue.observed || '');
+  document.getElementById('edit-expected').value =
+    (sel && sel.expected != null) ? sel.expected : (issue.expected || '');
+  document.getElementById('edit-notes').value =
+    (sel && sel.notes != null) ? sel.notes : (issue.notes || '');
+
+  // Metadata: assemble default from parts, or use saved override
+  const metaParts = [];
+  if (issue.affected_roles) metaParts.push('Roles: ' + issue.affected_roles);
+  if (issue.affected_area)  metaParts.push('Area: '  + issue.affected_area);
+  if (issue.timestamps)     metaParts.push(issue.timestamps);
+  document.getElementById('edit-metadata').value =
+    (sel && sel.metadata != null) ? sel.metadata : metaParts.join(' | ');
+
+  // Screenshot pending state
+  if (sel && sel.path) {
+    pendingPath = sel.path;
+    pendingCrop = sel.crop || null;
+    // Sync currentShotIdx to the selected path in the current issue's shots
+    const shots = issue.screenshots || [];
+    const idx   = shots.indexOf(pendingPath);
+    currentShotIdx = idx >= 0 ? idx : 0;
+  } else {
+    pendingPath    = null;
+    pendingCrop    = null;
+    currentShotIdx = 0;
+  }
 
   sourceIssueIdx = currentIdx;
-  renderThumbnails(currentIdx);
+  renderThumbStrip(currentIdx);
+  updateMainShot();
 
   // Merged state
-  const sel      = selections[issue.id];
   const isMerged = sel && sel.merged_into;
   document.getElementById('merged-banner').style.display = isMerged ? '' : 'none';
   if (isMerged) document.getElementById('merged-into-vid').textContent = sel.merged_into;
-  document.getElementById('skip-btn').disabled  = !!isMerged;
-  document.getElementById('split-btn').disabled = !!isMerged;
-  document.getElementById('merge-btn').disabled = !!isMerged;
+  document.getElementById('validate-btn').disabled = !!isMerged;
+  document.getElementById('skip-btn').disabled     = !!isMerged;
+  document.getElementById('split-btn').disabled    = !!isMerged;
+  document.getElementById('merge-btn').disabled    = !!isMerged;
 
   // Split state
   const hasSlideB = sel && typeof sel === 'object' && sel.slide_b;
@@ -468,15 +603,20 @@ function renderIssue() {
     slideBSection.style.display = '';
     document.getElementById('split-btn').textContent = 'Split \u21c5 Remove slide B';
     document.getElementById('split-btn').classList.add('active');
-    renderSlideBThumbnails(issue.id, sel.slide_b.path);
+    pendingPathB = sel.slide_b.path || null;
+    pendingCropB = sel.slide_b.crop || null;
+    renderSlideBStrip(pendingPathB);
+    updateSlideBMainShot();
   } else {
     slideBSection.style.display = 'none';
     document.getElementById('split-btn').textContent = 'Split \u21c5 Add slide B';
     document.getElementById('split-btn').classList.remove('active');
+    pendingPathB = null;
+    pendingCropB = null;
   }
 
   const completionEl = document.getElementById('completion');
-  if (pending === 0) {
+  if (pendingCount() === 0) {
     completionEl.classList.add('visible');
   } else {
     completionEl.classList.remove('visible');
@@ -484,14 +624,49 @@ function renderIssue() {
 }
 
 function navigateTo(idx) {
-  currentIdx = idx;
+  currentIdx     = idx;
   sourceIssueIdx = idx;
   lbContext = 'a';
   document.getElementById('other-issue-select').value = '';
   document.getElementById('source-bar').style.display = 'none';
-  document.getElementById('merge-row').style.display = 'none';
+  document.getElementById('merge-row').style.display  = 'none';
   renderNav();
   renderIssue();
+}
+
+// ── Slide B strip ─────────────────────────────────────────────────────────
+
+function updateSlideBMainShot() {
+  const img     = document.getElementById('slide-b-main-img');
+  const emptyEl = document.getElementById('slide-b-main-shot-empty');
+  if (pendingPathB) {
+    img.src = '/images?path=' + encodeURIComponent(pendingPathB);
+    img.style.display    = '';
+    emptyEl.style.display = 'none';
+  } else {
+    img.src = '';
+    img.style.display    = 'none';
+    emptyEl.style.display = '';
+  }
+}
+
+function renderSlideBStrip(selectedPath) {
+  const stripEl = document.getElementById('slide-b-strip');
+  const noSSEl  = document.getElementById('slide-b-no-screenshots');
+  stripEl.innerHTML = '';
+  const shots = (ISSUES[currentIdx] && ISSUES[currentIdx].screenshots) || [];
+  if (shots.length === 0) { noSSEl.style.display = 'block'; return; }
+  noSSEl.style.display = 'none';
+  shots.forEach((path, shotIdx) => {
+    const label = labelFromPath(path);
+    const item  = document.createElement('div');
+    item.className = 'strip-item' + (path === selectedPath ? ' slide-b-active' : '');
+    item.innerHTML =
+      '<img src="/images?path=' + encodeURIComponent(path) + '" loading="lazy" alt="">' +
+      '<div class="strip-label">' + label + '</div>';
+    item.onclick = () => { lbContext = 'b'; openLightbox(shotIdx); };
+    stripEl.appendChild(item);
+  });
 }
 
 // ── Hover preview ─────────────────────────────────────────────────────────
@@ -542,7 +717,7 @@ function openLightbox(shotIdx) {
   resetLightboxState();
 
   document.getElementById('lb-label').textContent   = labelFromPath(lbPath);
-  document.getElementById('lb-counter').textContent = `${currentShotIdx + 1} / ${shots.length}`;
+  document.getElementById('lb-counter').textContent = (currentShotIdx + 1) + ' / ' + shots.length;
 
   const showNav = shots.length > 1;
   document.getElementById('lb-prev').style.display = showNav ? '' : 'none';
@@ -580,13 +755,9 @@ function navigateLightbox(delta) {
 function updateModeUI() {
   const inDraw = lbMode === 'draw';
 
-  // Crop-mode-only elements
-  document.getElementById('clear-btn').style.display = inDraw ? 'none' : '';
-  // draw-btn managed by updateDrawBtn (hidden in draw mode via that path)
-
-  // Draw-mode-only elements
-  document.getElementById('recrop-btn').style.display    = inDraw ? '' : 'none';
-  document.getElementById('clearmarks-btn').style.display = inDraw ? '' : 'none';
+  document.getElementById('clear-btn').style.display       = inDraw ? 'none' : '';
+  document.getElementById('recrop-btn').style.display      = inDraw ? '' : 'none';
+  document.getElementById('clearmarks-btn').style.display  = inDraw ? '' : 'none';
 
   canvas.style.borderColor = inDraw ? '#7c3aed' : '#333';
 
@@ -603,14 +774,11 @@ function updateDrawBtn() {
 }
 
 function enterDrawMode() {
-  // Capture crop in natural-image coords BEFORE touching the canvas — getCrop()
-  // uses canvas dimensions as scale factors, so resizing first would corrupt it.
   const crop = getCrop();
   if (!crop) return;
   drawCrop = crop;
   lbMode   = 'draw';
 
-  // Resize canvas to match the crop's own aspect ratio (undistorted fill)
   const sw = crop.right - crop.left;
   const sh = crop.bottom - crop.top;
   const mw = window.innerWidth  * 0.90;
@@ -630,7 +798,6 @@ function enterCropMode() {
   penDrawing    = false;
   currentStroke = null;
 
-  // Restore canvas to full-image dimensions
   const mw = window.innerWidth  * 0.88;
   const mh = window.innerHeight * 0.70;
   const sc = Math.min(mw / lbImage.naturalWidth, mh / lbImage.naturalHeight, 1);
@@ -674,7 +841,7 @@ function drawCropMode() {
 }
 
 function drawDrawMode() {
-  const crop = drawCrop;   // use locked natural-image coords, not getCrop()
+  const crop = drawCrop;
   if (!crop) return;
 
   const { left, top, right, bottom } = crop;
@@ -751,7 +918,7 @@ function getCrop() {
 // ── Composite export ──────────────────────────────────────────────────────
 
 async function exportAnnotatedImage() {
-  const crop = drawCrop;   // locked natural-image coords captured at enterDrawMode()
+  const crop = drawCrop;
   if (!crop) return null;
   const { left, top, right, bottom } = crop;
   const sw = right - left;
@@ -786,45 +953,11 @@ async function exportAnnotatedImage() {
   });
 }
 
-// ── Actions ───────────────────────────────────────────────────────────────
-
-async function saveAndAdvance(vid, payload) {
-  await fetch('/save', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(payload),
-  });
-  // Preserve existing slide_b when updating slide A
-  const existing = selections[vid];
-  const entry = payload.skip ? null : { path: payload.path, crop: payload.crop };
-  if (entry && existing && typeof existing === 'object' && existing.slide_b) {
-    entry.slide_b = existing.slide_b;
-  }
-  selections[vid] = entry;
-  closeLightbox();
-  lbContext = 'a';
-  const next = nextPendingIdx();
-  navigateTo(next === -1 ? currentIdx : next);
-}
-
-async function saveSlideBAndClose(vid, path, crop) {
-  const slideB = { path, crop };
-  await fetch('/save', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ vid, slide_b: slideB }),
-  });
-  if (!selections[vid] || typeof selections[vid] !== 'object') selections[vid] = {};
-  selections[vid].slide_b = slideB;
-  closeLightbox();
-  lbContext = 'a';
-  renderSlideBThumbnails(vid, path);
-  renderNav();
-}
+// ── Lightbox: Continue (stores in pending — does NOT save or advance) ──────
 
 document.getElementById('continue-btn').onclick = async () => {
-  const vid = ISSUES[currentIdx].id;
   if (lbMode === 'draw' && penStrokes.length > 0) {
+    const vid = ISSUES[currentIdx].id;
     const b64 = await exportAnnotatedImage();
     const res = await fetch('/save-image', {
       method:  'POST',
@@ -833,18 +966,29 @@ document.getElementById('continue-btn').onclick = async () => {
     });
     const { path: annotatedPath } = await res.json();
     if (lbContext === 'b') {
-      await saveSlideBAndClose(vid, annotatedPath, null);
+      pendingPathB = annotatedPath; pendingCropB = null;
     } else {
-      await saveAndAdvance(vid, { vid, path: annotatedPath, crop: null });
+      pendingPath = annotatedPath; pendingCrop = null;
     }
   } else {
-    const crop = drawCrop || getCrop();
     if (lbContext === 'b') {
-      await saveSlideBAndClose(vid, lbPath, crop);
+      pendingPathB = lbPath; pendingCropB = drawCrop || getCrop();
     } else {
-      await saveAndAdvance(vid, { vid, path: lbPath, crop });
+      pendingPath = lbPath; pendingCrop = drawCrop || getCrop();
     }
   }
+  if (lbContext === 'b') {
+    updateSlideBMainShot();
+    renderSlideBStrip(pendingPathB);
+  } else {
+    updateMainShot();
+    const shots = (ISSUES[sourceIssueIdx] && ISSUES[sourceIssueIdx].screenshots) || [];
+    document.querySelectorAll('#thumb-strip .strip-item').forEach((item, idx) => {
+      item.classList.toggle('active', shots[idx] === pendingPath);
+    });
+  }
+  closeLightbox();
+  lbContext = 'a';
 };
 
 document.getElementById('draw-btn').onclick = enterDrawMode;
@@ -855,11 +999,6 @@ document.getElementById('clearmarks-btn').onclick = () => {
   penStrokes    = [];
   currentStroke = null;
   drawDrawMode();
-};
-
-document.getElementById('skip-btn').onclick = () => {
-  const vid = ISSUES[currentIdx].id;
-  saveAndAdvance(vid, { vid, skip: true });
 };
 
 document.getElementById('clear-btn').onclick = () => {
@@ -873,48 +1012,83 @@ document.getElementById('cancel-btn').onclick = closeLightbox;
 document.getElementById('lb-prev').onclick = () => navigateLightbox(-1);
 document.getElementById('lb-next').onclick = () => navigateLightbox(1);
 
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeLightbox(); return; }
-  const lb = document.getElementById('lightbox');
-  if (!lb.classList.contains('open')) return;
-  if (e.key === 'ArrowLeft')  navigateLightbox(-1);
-  if (e.key === 'ArrowRight') navigateLightbox(1);
-});
+// ── Main shot click → open lightbox ───────────────────────────────────────
 
-// ── Source-issue selector ─────────────────────────────────────────────────
-
-function populateOtherIssueSelect() {
-  const sel = document.getElementById('other-issue-select');
-  sel.innerHTML = '<option value="">— select —</option>';
-  ISSUES.forEach((issue, idx) => {
-    const opt = document.createElement('option');
-    opt.value = idx;
-    opt.textContent = issue.id + ' — ' + issue.title;
-    sel.appendChild(opt);
-  });
-}
-
-function resetSourceIssue() {
-  sourceIssueIdx = currentIdx;
-  document.getElementById('other-issue-select').value = '';
-  document.getElementById('source-bar').style.display = 'none';
-  renderThumbnails(currentIdx);
-}
-
-document.getElementById('other-issue-select').onchange = function() {
-  const val = this.value;
-  if (!val) {
-    resetSourceIssue();
-  } else {
-    sourceIssueIdx = parseInt(val);
-    document.getElementById('source-vid-label').textContent = ISSUES[sourceIssueIdx].id;
-    document.getElementById('target-vid-label').textContent = ISSUES[currentIdx].id;
-    document.getElementById('source-bar').style.display = 'flex';
-    renderThumbnails(sourceIssueIdx);
-  }
+document.getElementById('main-shot').onclick = () => {
+  if (!pendingPath) return;
+  const shots = (ISSUES[sourceIssueIdx] && ISSUES[sourceIssueIdx].screenshots) || [];
+  const idx   = shots.indexOf(pendingPath);
+  openLightbox(idx >= 0 ? idx : currentShotIdx);
 };
 
-document.getElementById('source-reset-btn').onclick = resetSourceIssue;
+// ── Validate & Next ───────────────────────────────────────────────────────
+
+document.getElementById('validate-btn').onclick = async () => {
+  const vid     = ISSUES[currentIdx].id;
+  const payload = {
+    vid,
+    path:     pendingPath || null,
+    crop:     pendingCrop || null,
+    title:    document.getElementById('edit-title').value,
+    severity: document.getElementById('edit-severity').value,
+    observed: document.getElementById('edit-observed').value,
+    expected: document.getElementById('edit-expected').value,
+    notes:    document.getElementById('edit-notes').value,
+    metadata: document.getElementById('edit-metadata').value,
+  };
+  const slideBSection = document.getElementById('slide-b-section');
+  if (slideBSection.style.display !== 'none') {
+    payload.slide_b = { path: pendingPathB || null, crop: pendingCropB || null };
+  }
+  await fetch('/save', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(payload),
+  });
+  selections[vid] = {
+    path:     payload.path,
+    crop:     payload.crop,
+    title:    payload.title,
+    severity: payload.severity,
+    observed: payload.observed,
+    expected: payload.expected,
+    notes:    payload.notes,
+    metadata: payload.metadata,
+  };
+  if (payload.slide_b) selections[vid].slide_b = payload.slide_b;
+  const next = nextPendingIdx();
+  navigateTo(next === -1 ? currentIdx : next);
+};
+
+// ── Skip ──────────────────────────────────────────────────────────────────
+
+document.getElementById('skip-btn').onclick = async () => {
+  const vid     = ISSUES[currentIdx].id;
+  const payload = {
+    vid,
+    path:     null,
+    crop:     null,
+    title:    document.getElementById('edit-title').value,
+    severity: document.getElementById('edit-severity').value,
+    observed: document.getElementById('edit-observed').value,
+    expected: document.getElementById('edit-expected').value,
+    notes:    document.getElementById('edit-notes').value,
+    metadata: document.getElementById('edit-metadata').value,
+  };
+  // Preserve existing slide_b when skipping
+  const existing = selections[vid];
+  if (existing && typeof existing === 'object' && existing.slide_b) {
+    payload.slide_b = existing.slide_b;
+  }
+  await fetch('/save', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(payload),
+  });
+  selections[vid] = { ...payload };
+  const next = nextPendingIdx();
+  navigateTo(next === -1 ? currentIdx : next);
+};
 
 // ── Split ─────────────────────────────────────────────────────────────────
 
@@ -926,6 +1100,7 @@ document.getElementById('split-btn').onclick = async () => {
     slideBSection.style.display = 'none';
     document.getElementById('split-btn').textContent = 'Split \u21c5 Add slide B';
     document.getElementById('split-btn').classList.remove('active');
+    pendingPathB = null; pendingCropB = null;
     await fetch('/save', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -937,12 +1112,22 @@ document.getElementById('split-btn').onclick = async () => {
     slideBSection.style.display = '';
     document.getElementById('split-btn').textContent = 'Split \u21c5 Remove slide B';
     document.getElementById('split-btn').classList.add('active');
-    renderSlideBThumbnails(vid, null);
+    pendingPathB = null; pendingCropB = null;
+    renderSlideBStrip(null);
+    updateSlideBMainShot();
   }
 };
 
 document.getElementById('slide-b-clear-btn').onclick = () => {
   document.getElementById('split-btn').click();
+};
+
+document.getElementById('slide-b-main-shot').onclick = () => {
+  if (!pendingPathB) return;
+  const shots = (ISSUES[currentIdx] && ISSUES[currentIdx].screenshots) || [];
+  const idx   = shots.indexOf(pendingPathB);
+  lbContext = 'b';
+  openLightbox(idx >= 0 ? idx : currentShotIdx);
 };
 
 // ── Merge ─────────────────────────────────────────────────────────────────
@@ -954,7 +1139,7 @@ function populateMergeTargetSelect() {
   ISSUES.forEach(issue => {
     if (issue.id === currentVid) return;
     const s = selections[issue.id];
-    if (s && s.merged_into) return; // don't offer already-merged issues as targets
+    if (s && s.merged_into) return;
     const opt = document.createElement('option');
     opt.value = issue.id;
     opt.textContent = issue.id + ' \u2014 ' + issue.title;
@@ -1001,6 +1186,51 @@ document.getElementById('unmerge-btn').onclick = async () => {
   renderNav();
   renderIssue();
 };
+
+// ── Source-issue selector ─────────────────────────────────────────────────
+
+function populateOtherIssueSelect() {
+  const sel = document.getElementById('other-issue-select');
+  sel.innerHTML = '<option value="">&mdash; select &mdash;</option>';
+  ISSUES.forEach((issue, idx) => {
+    const opt = document.createElement('option');
+    opt.value = idx;
+    opt.textContent = issue.id + ' \u2014 ' + issue.title;
+    sel.appendChild(opt);
+  });
+}
+
+function resetSourceIssue() {
+  sourceIssueIdx = currentIdx;
+  document.getElementById('other-issue-select').value = '';
+  document.getElementById('source-bar').style.display = 'none';
+  renderThumbStrip(currentIdx);
+}
+
+document.getElementById('other-issue-select').onchange = function() {
+  const val = this.value;
+  if (!val) {
+    resetSourceIssue();
+  } else {
+    sourceIssueIdx = parseInt(val);
+    document.getElementById('source-vid-label').textContent = ISSUES[sourceIssueIdx].id;
+    document.getElementById('target-vid-label').textContent = ISSUES[currentIdx].id;
+    document.getElementById('source-bar').style.display = 'flex';
+    renderThumbStrip(sourceIssueIdx);
+  }
+};
+
+document.getElementById('source-reset-btn').onclick = resetSourceIssue;
+
+// ── Keyboard ──────────────────────────────────────────────────────────────
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeLightbox(); return; }
+  const lb = document.getElementById('lightbox');
+  if (!lb.classList.contains('open')) return;
+  if (e.key === 'ArrowLeft')  navigateLightbox(-1);
+  if (e.key === 'ArrowRight') navigateLightbox(1);
+});
 
 // ── Init ──────────────────────────────────────────────────────────────────
 
@@ -1093,25 +1323,24 @@ class ReviewHandler(BaseHTTPRequestHandler):
 
         if "merged_into" in body:
             sels[vid] = {"merged_into": body["merged_into"]}
-        elif "slide_b" in body:
-            existing = sels.get(vid)
-            if not isinstance(existing, dict) or existing.get("merged_into"):
-                existing = {}
-            existing["slide_b"] = body["slide_b"]
-            sels[vid] = existing
         elif body.get("remove_slide_b"):
             existing = sels.get(vid)
             if isinstance(existing, dict):
                 existing.pop("slide_b", None)
                 sels[vid] = existing
-        elif body.get("skip"):
-            sels[vid] = None
         else:
-            # Normal save — preserve existing slide_b if present
-            existing = sels.get(vid)
-            entry = {"path": body["path"], "crop": body.get("crop")}
-            if isinstance(existing, dict) and "slide_b" in existing:
-                entry["slide_b"] = existing["slide_b"]
+            TEXT_FIELDS = ("title", "severity", "observed", "expected", "notes", "metadata")
+            entry = {"path": body.get("path"), "crop": body.get("crop")}
+            for f in TEXT_FIELDS:
+                if f in body:
+                    entry[f] = body[f]
+            if "slide_b" in body and isinstance(body["slide_b"], dict):
+                entry["slide_b"] = body["slide_b"]
+            elif "slide_b" not in body:
+                # Preserve existing slide_b when not explicitly sent
+                existing = sels.get(vid)
+                if isinstance(existing, dict) and "slide_b" in existing:
+                    entry["slide_b"] = existing["slide_b"]
             sels[vid] = entry
 
         save_selections(self.config["selections_path"], sels)
