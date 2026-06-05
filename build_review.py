@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import io
 import json
 import os
 import threading
@@ -135,6 +136,13 @@ def anchors_resolved(issue):
     return all(a.get("frame_status") in RESOLVED_FRAME for a in issue.get("anchors", []))
 
 
+def frames_extracted(issue):
+    """True once the frame pipeline has produced candidates for any anchor.
+    Drives the gate-3 accept-advance: with no frames yet, Accept advances;
+    with frames present, Accept stays so the reviewer picks one (gate 5)."""
+    return any(a.get("candidate_frames") for a in issue.get("anchors", []))
+
+
 def chip_state(issue):
     """The nav-chip state per the design's interaction-state table."""
     s = issue.get("status")
@@ -197,6 +205,26 @@ def apply_action(doc, body):
 # ---------------------------------------------------------------------------
 # Path-traversal guard (load-bearing — keep + regression-tested)
 # ---------------------------------------------------------------------------
+
+def parse_crop(s):
+    """Parse a 'left,top,right,bottom' query value into a crop dict, or None.
+
+    Lenient: missing/malformed input returns None (serve the full image) rather
+    than erroring. Matches selected_frame.crop / html_export.embed_image order.
+    """
+    if not s:
+        return None
+    parts = s.split(",")
+    if len(parts) != 4:
+        return None
+    try:
+        left, top, right, bottom = (int(p) for p in parts)
+    except ValueError:
+        return None
+    if right <= left or bottom <= top:
+        return None
+    return {"left": left, "top": top, "right": right, "bottom": bottom}
+
 
 def is_within(root, candidate):
     """
@@ -293,12 +321,20 @@ h1.title{font-size:20px;font-weight:600;margin:4px 0 2px;width:100%}
 #reasons .opt:hover{background:#2a1a1a}
 #reasons .opt .key{background:#3a1a1a;color:#f87171;border-radius:4px;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:12px}
 #reasons .foot{font-size:11px;color:#666;margin-top:12px}
+/* selected-result preview (the saved crop/mark, shown on the facet) */
+.savedshot{margin-bottom:10px}
+.savedshot .lab{font-size:10px;font-weight:700;color:#4ade80;letter-spacing:.06em;margin-bottom:5px}
+.savedshot img{max-width:340px;max-height:220px;border:2px solid #22c55e;border-radius:6px;display:block}
 /* lightbox (crop / draw) */
 #lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.93);z-index:200;flex-direction:column;align-items:center;justify-content:center;padding:16px}
 #lightbox.open{display:flex}
 #lb-top{display:flex;align-items:center;gap:16px;margin-bottom:12px;width:100%;max-width:92vw;justify-content:space-between}
-#lb-label{font-size:13px;color:#999;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#lb-hint{font-size:12px;color:#555}
+#lb-nav{display:flex;align-items:center;gap:8px;flex-shrink:0}
+#lb-prev,#lb-next{background:none;border:1px solid #444;color:#bbb;border-radius:4px;width:30px;height:30px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;line-height:1}
+#lb-prev:hover,#lb-next:hover{background:#2a2a2a;color:#fff}
+#lb-counter{font-size:12px;color:#666;min-width:36px;text-align:center}
+#lb-label{font-size:13px;color:#999;flex:1;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#lb-hint{font-size:12px;color:#555;flex-shrink:0}
 #crop-canvas{cursor:crosshair;border:1px solid #333;max-width:90vw;max-height:70vh;display:block}
 #lb-actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;justify-content:center}
 .lb-btn{padding:8px 20px;border-radius:6px;border:none;cursor:pointer;font-size:14px;font-weight:500}
@@ -317,7 +353,15 @@ h1.title{font-size:20px;font-weight:600;margin:4px 0 2px;width:100%}
 </div></div>
 
 <div id="lightbox">
-  <div id="lb-top"><span id="lb-label"></span><span id="lb-hint">Drag to crop &bull; optional</span></div>
+  <div id="lb-top">
+    <div id="lb-nav">
+      <button id="lb-prev">&#8592;</button>
+      <span id="lb-counter">1 / 1</span>
+      <button id="lb-next">&#8594;</button>
+    </div>
+    <span id="lb-label"></span>
+    <span id="lb-hint">&#8592; / &#8594; between frames &bull; drag to crop &bull; Enter use</span>
+  </div>
   <canvas id="crop-canvas"></canvas>
   <div id="lb-actions">
     <button class="lb-btn" id="draw-btn">Draw &#8594;</button>
@@ -341,6 +385,7 @@ let editing = false;
 
 // ── derived state (mirrors build_review.py) ──
 function anchorsResolved(iss){return iss.anchors.every(a=>a.frame_status==='selected'||a.frame_status==='skipped');}
+function framesExtracted(iss){return iss.anchors.some(a=>(a.candidate_frames||[]).length>0);}
 function chipState(iss){
   if(iss.status==='rejected')return 'rejected';
   if(iss.status==='proposed')return 'proposed';
@@ -422,14 +467,23 @@ function render(){
       +`<div class="cap">${esc(a.caption||'(facet)')}<span class="ts">@${fmtTs(a.ts_seconds)}</span></div>`;
     const fs=a.frame_status;
     const sl={pending:'⏳ pending — pick a frame',selected:'✓ selected',skipped:'— no screenshot'}[fs]||fs;
-    h+=`<div class="fstat ${fs}">${sl}</div><div class="strip">`;
+    h+=`<div class="fstat ${fs}">${sl}</div>`;
+    // saved result: the actual cropped/marked image, so it's clear what was stored
+    if(fs==='selected'&&a.selected_frame){
+      let ssrc='/images?path='+encodeURIComponent(a.selected_frame.path);
+      const cr=a.selected_frame.crop;
+      if(cr)ssrc+=`&crop=${cr.left},${cr.top},${cr.right},${cr.bottom}`;
+      h+=`<div class="savedshot"><div class="lab">✓ SAVED</div>`
+        +`<img src="${ssrc}" alt="saved screenshot"></div>`;
+    }
+    h+=`<div class="strip">`;
     const cands=a.candidate_frames||[];
     if(!cands.length){
       h+=`<div class="cand missing">no frames yet<br>@${fmtTs(a.ts_seconds)}</div>`;
     }else{
       cands.forEach((c,ci)=>{
         const selp=a.selected_frame&&a.selected_frame.path===c.path;
-        h+=`<div class="cand${selp?' sel':''}" onclick="pick(${fi},${c.offset})" oncontextmenu="lightboxFor(${fi},${c.offset});return false">`
+        h+=`<div class="cand${selp?' sel':''}" onclick="lightboxFor(${fi},${c.offset})" title="click to view full size · ${ci+1} to pick">`
           +`<div class="num">${ci+1}</div>`
           +`<img loading="lazy" src="/images?path=${encodeURIComponent(c.path)}" alt="+${c.offset}s">`
           +`<div class="off">+${c.offset}s${ci===0?' · default':''}</div></div>`;
@@ -447,7 +501,7 @@ function render(){
 function setHint(){
   document.getElementById('hintbar').innerHTML = editing
     ? '<b>Esc</b> cancel edit · <b>Ctrl+Enter</b> save — single-key verbs are disabled while typing'
-    : '<b>A</b> accept · <b>R</b> reject · <b>E</b> edit · <b>J/K</b> prev/next · <b>1-6</b> pick frame on focused facet · <b>Tab</b> next facet · <b>Enter</b> accept + advance';
+    : '<b>A</b> accept · <b>R</b> reject · <b>E</b> edit · <b>J/K</b> prev/next · <b>click</b> a frame to view · <b>1-6</b> pick frame on focused facet · <b>Tab</b> next facet · <b>Enter</b> accept + advance';
 }
 
 // ── edit mode ──
@@ -494,12 +548,22 @@ async function action(body){
   DOC=await r.json();ISSUES=DOC.issues;render();return DOC;
 }
 function curKey(){return ISSUES[currentIdx].id;}
-async function doAccept(){await action({op:'accept',key:curKey()});}
+async function doAccept(){
+  // Gate-3 accept. With no frames extracted yet there is nothing to pick, so
+  // advance to the next untriaged issue (triage flows). Once frames exist, stay
+  // on the card so the reviewer picks one (gate 5). Enter always advances.
+  const iss=ISSUES[currentIdx];const advance=!framesExtracted(iss);
+  if(!await action({op:'accept',key:iss.id}))return;
+  if(advance){currentIdx=nextIdx();focusedFacet=0;render();}
+}
 async function pick(fi,offset){const a=ISSUES[currentIdx].anchors[fi];focusedFacet=fi;await action({op:'pick',key:curKey(),anchor:a.id,offset});}
 async function skip(fi){const a=ISSUES[currentIdx].anchors[fi];focusedFacet=fi;await action({op:'skip',key:curKey(),anchor:a.id});}
 function nextIdx(){for(let i=currentIdx+1;i<ISSUES.length;i++)if(ISSUES[i].status==='proposed')return i;
   for(let i=0;i<currentIdx;i++)if(ISSUES[i].status==='proposed')return i;return Math.min(currentIdx+1,ISSUES.length-1);}
-async function acceptAdvance(){await doAccept();currentIdx=nextIdx();focusedFacet=0;render();}
+async function acceptAdvance(){  // Enter: accept + always advance, regardless of frames
+  if(!await action({op:'accept',key:curKey()}))return;
+  currentIdx=nextIdx();focusedFacet=0;render();
+}
 
 // ── reject reason picker ──
 function openReasons(){
@@ -553,6 +617,11 @@ function lightboxFor(fi,offset){
   lbIssue=iss.id;lbAnchor=a.id;lbPath=c.path;focusedFacet=fi;
   cropStart=cropEnd=null;dragging=false;drawCrop=null;penStrokes=[];penDrawing=false;currentStroke=null;lbMode='crop';
   document.getElementById('lb-label').textContent=(a.caption||'')+'  +'+offset+'s';
+  const cands=a.candidate_frames||[];const ci=cands.findIndex(x=>x.offset===offset);
+  document.getElementById('lb-counter').textContent=(ci+1)+' / '+cands.length;
+  const showNav=cands.length>1?'':'none';
+  document.getElementById('lb-prev').style.display=showNav;
+  document.getElementById('lb-next').style.display=showNav;
   updateModeUI();
   document.getElementById('lightbox').classList.add('open');
   lbImage=new Image();
@@ -561,7 +630,19 @@ function lightboxFor(fi,offset){
   lbImage.src='/images?path='+encodeURIComponent(lbPath);
 }
 function closeLightbox(){document.getElementById('lightbox').classList.remove('open');lbPath=null;}
-function handleLbKey(e){if(e.key==='Escape')closeLightbox();}
+function navigateLightbox(delta){
+  const a=ISSUES[currentIdx].anchors[focusedFacet];const cands=(a&&a.candidate_frames)||[];
+  if(cands.length<2)return;
+  const cur=cands.findIndex(c=>c.path===lbPath);
+  const next=cands[(cur+delta+cands.length)%cands.length];
+  lightboxFor(focusedFacet,next.offset);
+}
+function handleLbKey(e){
+  if(e.key==='Escape'){closeLightbox();return;}
+  if(e.key==='ArrowLeft'){e.preventDefault();navigateLightbox(-1);return;}
+  if(e.key==='ArrowRight'){e.preventDefault();navigateLightbox(1);return;}
+  if(e.key==='Enter'){e.preventDefault();document.getElementById('continue-btn').click();return;}
+}
 function getCrop(){
   if(!cropStart||!cropEnd)return null;
   const sx=lbImage.naturalWidth/canvas.width,sy=lbImage.naturalHeight/canvas.height;
@@ -607,6 +688,8 @@ document.getElementById('recrop-btn').onclick=()=>{lbMode='crop';drawCrop=null;p
 document.getElementById('clearmarks-btn').onclick=()=>{penStrokes=[];drawDrawMode();};
 document.getElementById('clear-btn').onclick=()=>{cropStart=cropEnd=null;drawCropMode();};
 document.getElementById('cancel-btn').onclick=closeLightbox;
+document.getElementById('lb-prev').onclick=()=>navigateLightbox(-1);
+document.getElementById('lb-next').onclick=()=>navigateLightbox(1);
 async function exportAnnotated(){
   const c=drawCrop;const sw=c.right-c.left,sh=c.bottom-c.top;
   const off=new OffscreenCanvas(sw,sh),octx=off.getContext('2d');octx.drawImage(lbImage,c.left,c.top,sw,sh,0,0,sw,sh);
@@ -663,9 +746,10 @@ class ReviewHandler(BaseHTTPRequestHandler):
         if parsed.path == "/":
             self._serve_html()
         elif parsed.path == "/images":
-            path = parse_qs(parsed.query).get("path", [None])[0]
+            qs = parse_qs(parsed.query)
+            path = qs.get("path", [None])[0]
             if path:
-                self._serve_image(unquote(path))
+                self._serve_image(unquote(path), crop=parse_crop(qs.get("crop", [None])[0]))
             else:
                 self.send_error(400)
         elif parsed.path == "/state":
@@ -689,7 +773,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
         html = html.replace("__REASONS_JSON__", json.dumps(sorted(st.REJECT_REASONS)))
         self._send_bytes(html.encode("utf-8"), "text/html; charset=utf-8")
 
-    def _serve_image(self, rel_path):
+    def _serve_image(self, rel_path, crop=None):
         root = os.path.abspath(".")
         abs_path = os.path.abspath(rel_path)
         if not is_within(root, abs_path):
@@ -698,12 +782,24 @@ class ReviewHandler(BaseHTTPRequestHandler):
         if not os.path.isfile(abs_path):
             self.send_error(404)
             return
+        if crop:
+            # Apply the human's crop on the fly, same semantics as html_export so the
+            # console preview is byte-identical to the exported report.
+            from PIL import Image            # lazy: only crop previews need Pillow
+            img = Image.open(abs_path).convert("RGB")
+            img = img.crop((crop["left"], crop["top"], crop["right"], crop["bottom"]))
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=85)
+            self._send_bytes(buf.getvalue(), "image/jpeg")
+            return
         with open(abs_path, "rb") as f:
             data = f.read()
         self._send_bytes(data, "image/jpeg")
 
     def _handle_action(self):
         length = int(self.headers.get("Content-Length", 0))
+        if length > 65_536:
+            self.send_error(413, "Payload too large"); return
         body = json.loads(self.rfile.read(length))
         doc = self._doc()
         try:
@@ -716,8 +812,16 @@ class ReviewHandler(BaseHTTPRequestHandler):
 
     def _handle_save_image(self):
         length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length))
-        issue_id, anchor_id, img_b64 = body["issue"], body["anchor"], body["image_b64"]
+        if length > 52_428_800:
+            self.send_error(413, "Payload too large"); return
+        try:
+            body = json.loads(self.rfile.read(length))
+            issue_id, anchor_id, img_b64 = body["issue"], body["anchor"], body["image_b64"]
+            img_bytes = base64.b64decode(img_b64)
+        except (ValueError, KeyError, TypeError) as e:
+            # Malformed request → 400, matching _handle_action (never a 500 traceback).
+            self.send_error(400, str(e))
+            return
 
         frames_root = os.path.join(os.path.dirname(self.issues_path), "frames")
         out_dir = Path(frames_root) / issue_id / anchor_id
@@ -728,7 +832,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
         out_dir.mkdir(parents=True, exist_ok=True)
         n = len(list(out_dir.glob("annotated-*.jpg"))) + 1
         out_path = out_dir / f"annotated-{n}.jpg"
-        out_path.write_bytes(base64.b64decode(img_b64))
+        out_path.write_bytes(img_bytes)
         self._send_json({"path": out_path.as_posix()})
 
     def _send_json(self, obj):
@@ -770,10 +874,11 @@ def main(argv=None):
         raise SystemExit("issues.json is invalid:\n  - " + "\n  - ".join(errs))
     print(f"Loaded {len(visible_issues(doc))} issues from {issues_path}")
 
-    port = 8765
+    DEFAULT_PORT = 8765
+    port = DEFAULT_PORT
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE) as f:
-            port = json.load(f).get("server_port", 8765)
+            port = json.load(f).get("server_port", DEFAULT_PORT)
 
     handler = functools.partial(ReviewHandler, issues_path)
     server = HTTPServer(("localhost", port), handler)

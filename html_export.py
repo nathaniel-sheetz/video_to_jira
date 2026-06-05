@@ -246,8 +246,9 @@ def main(argv=None):
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html_text)
 
-    n = len(export_issues(doc))
-    incomplete = sum(1 for i in export_issues(doc) if unresolved_anchors(i))
+    exported = export_issues(doc)
+    n = len(exported)
+    incomplete = sum(1 for i in exported if unresolved_anchors(i))
     note = f" ({incomplete} with unpicked facets)" if incomplete else ""
     print(f"Wrote {out_path} — {n} issue(s){note}.")
 

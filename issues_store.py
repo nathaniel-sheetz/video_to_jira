@@ -137,6 +137,14 @@ def validate(doc):
         if sev not in SEV_RANK:
             errs.append(f"{where}: severity {sev!r} not in {SEVERITIES}")
 
+        # Every live issue (extraction proposes it, human keeps it) must carry a
+        # scannable title. Rejected/merged_out tombstones are exempt — they never
+        # reach the console card or export. This is the guard that would have
+        # caught the title-less fixture before it reached the review console.
+        if status in ("proposed", "accepted", "edited"):
+            if not (iss.get("title") or "").strip():
+                errs.append(f"{where}: missing title (status={status})")
+
         cats = iss.get("categories")
         if not isinstance(cats, list) or not cats:
             errs.append(f"{where}: categories must be a non-empty list")
@@ -239,7 +247,7 @@ def renumber(doc):
     VID-NNN labels. Stable ids are preserved; the first label each issue ever
     had is preserved under provenance.source_label. Idempotent.
     """
-    issues = sorted(doc["issues"], key=lambda i: (SEV_RANK[i["severity"]], _first_ts(i)))
+    issues = sorted(doc["issues"], key=lambda i: (SEV_RANK.get(i.get("severity", ""), 99), _first_ts(i)))
     for n, iss in enumerate(issues, 1):
         prov = iss.setdefault("provenance", {})
         if "source_label" not in prov and iss.get("label"):
@@ -331,6 +339,10 @@ def split(doc, issue_key, anchor_ids):
         "id": new_issue_id(doc),
         "label": "",
         "status": "proposed",
+        # Inherit the parent's title as a placeholder; the human renames the
+        # split-off issue at the gate. Keeps the new issue schema-valid (title
+        # is required for proposed) instead of emitting an empty one.
+        "title": src.get("title", ""),
         "severity": src["severity"],
         "confidence": src.get("confidence", "High"),
         "categories": list(src.get("categories", [])),
