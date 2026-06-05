@@ -34,6 +34,7 @@ def _anchor(aid="anc_1", ts=100):
 def _issue(iid="iss_a", status="proposed", anchors=None):
     return {
         "id": iid, "label": "VID-001", "status": status, "severity": "S1",
+        "title": "a title",
         "confidence": "High", "categories": ["Functional"],
         "affected_area": "x", "affected_roles": ["All users"],
         "observed": ["o"], "expected": ["e"], "notes": [],

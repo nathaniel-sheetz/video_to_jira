@@ -70,6 +70,14 @@ def test_parse_timestamp_forms():
     assert ex._parse_timestamp("12:30.500 --> 12:31.000") == 750
 
 
+def test_parse_timestamp_unparseable_raises():
+    try:
+        ex._parse_timestamp("not a timestamp")
+    except ValueError:
+        return
+    assert False, "unparseable timestamp should raise ValueError"
+
+
 def test_parse_transcript_cues_and_lines():
     cues = ex.parse_transcript(SAMPLE)
     assert len(cues) == 6
@@ -174,6 +182,32 @@ def test_resolve_missing_quote_raises():
         assert False, "expected GroundingError"
     except ex.GroundingError:
         pass
+
+
+def test_resolve_empty_quote_raises():
+    cues = ex.parse_transcript(SAMPLE)
+    try:
+        ex.resolve_quote("", cues)
+        assert False, "empty quote should raise GroundingError"
+    except ex.GroundingError:
+        pass
+
+
+def test_resolve_over_span_raises():
+    # Build a transcript where a long quote spans more than MAX_QUOTE_SPAN_CUES.
+    # 8 short cues so a quote pulling all of them exceeds the 6-cue limit.
+    long_transcript = "\n\n".join(
+        f"00:0{i}:00.000 --> 00:0{i}:01.000\nword{i} content here"
+        for i in range(8)
+    )
+    cues = ex.parse_transcript(long_transcript)
+    # Join text from all 8 cues — guaranteed to span > MAX_QUOTE_SPAN_CUES.
+    full_quote = " ".join(c["text"] for c in cues)
+    try:
+        ex.resolve_quote(full_quote, cues)
+        assert False, "over-span quote should raise GroundingError"
+    except ex.GroundingError as e:
+        assert "cues" in str(e)
 
 
 # ---------------------------------------------------------------------------

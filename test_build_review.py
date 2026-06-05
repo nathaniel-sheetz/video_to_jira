@@ -33,6 +33,7 @@ def _anchor(aid="anc_1", ts=100, fs="pending", cands=None, sel=None):
 def _issue(iid="iss_a", status="proposed", anchors=None):
     return {
         "id": iid, "label": "VID-001", "status": status, "severity": "S1",
+        "title": "a title",
         "confidence": "High", "categories": ["Functional"],
         "affected_area": "x", "affected_roles": ["All users"],
         "observed": ["o"], "expected": ["e"], "notes": [],
@@ -156,6 +157,24 @@ def test_is_complete_semantics():
     assert br.is_complete(accepted)
 
 
+def test_frames_extracted():
+    # No anchor has candidate_frames yet (pre-extraction) → False.
+    pre = _issue(anchors=[_anchor("anc_1", cands=[]), _anchor("anc_2", cands=[])])
+    assert not br.frames_extracted(pre)
+    # Any anchor with candidates → True (frames have been extracted).
+    post = _issue(anchors=[_anchor("anc_1", cands=[]), _anchor("anc_2")])
+    assert br.frames_extracted(post)
+
+
+def test_html_accept_advances_when_no_frames():
+    # Browser-side: doAccept must consult framesExtracted so Accept advances during
+    # pre-extraction triage but stays once frames exist. Guards against a future edit
+    # dropping the frame-aware advance.
+    assert "function framesExtracted(" in br.HTML
+    assert "framesExtracted(iss)" in br.HTML, \
+        "doAccept no longer gates its advance on whether frames are extracted"
+
+
 def test_visible_excludes_merged_out():
     doc = _doc([_issue("iss_a"), _issue("iss_dead", status="merged_out", anchors=[])])
     vis = br.visible_issues(doc)
@@ -192,6 +211,59 @@ def test_apply_action_dispatch_and_roundtrip(tmp_path=None):
         assert st.load(p) == doc
 
 
+def test_accept_missing_key_raises():
+    try:
+        br.accept_issue(_doc([_issue()]), "no_such_key")
+    except KeyError:
+        return
+    assert False, "missing key should raise KeyError"
+
+
+def test_reject_missing_key_raises():
+    try:
+        br.reject_issue(_doc([_issue()]), "no_such_key")
+    except KeyError:
+        return
+    assert False, "missing key should raise KeyError"
+
+
+def test_skip_missing_key_raises():
+    try:
+        br.skip_anchor(_doc([_issue()]), "no_such_key", "anc_1")
+    except KeyError:
+        return
+    assert False, "missing key should raise KeyError"
+
+
+def test_pick_missing_key_raises():
+    try:
+        br.pick_frame(_doc([_issue()]), "no_such_key", "anc_1", offset=0)
+    except KeyError:
+        return
+    assert False, "missing key should raise KeyError"
+
+
+def test_apply_action_dispatch_reject():
+    doc = _doc([_issue()])
+    br.apply_action(doc, {"op": "reject", "key": "iss_a", "reason": "narration"})
+    assert doc["issues"][0]["status"] == "rejected"
+    assert doc["issues"][0]["reject_reason"] == "narration"
+
+
+def test_apply_action_dispatch_edit():
+    doc = _doc([_issue()])
+    br.apply_action(doc, {"op": "edit", "key": "iss_a",
+                          "fields": {"observed": ["edited"]}})
+    assert doc["issues"][0]["status"] == "edited"
+    assert doc["issues"][0]["observed"] == ["edited"]
+
+
+def test_apply_action_dispatch_skip():
+    doc = _doc([_issue(anchors=[_anchor(fs="selected", sel={"path": "x"})])])
+    br.apply_action(doc, {"op": "skip", "key": "iss_a", "anchor": "anc_1"})
+    assert doc["issues"][0]["anchors"][0]["frame_status"] == "skipped"
+
+
 def test_apply_action_unknown_op_raises():
     try:
         br.apply_action(_doc([_issue()]), {"op": "frobnicate", "key": "iss_a"})
@@ -221,6 +293,47 @@ def test_is_within_blocks_sibling_prefix():
 def test_is_within_blocks_absolute_outside():
     root = os.path.abspath(".")
     assert not br.is_within(root, os.path.abspath(os.sep + "etc"))
+
+
+# ── keyboard focus-guard (regression — design review CRITICAL requirement) ──
+# The guard itself runs in the browser; this asserts the dispatch logic is still
+# wired so single-key verbs go inert while a text field is focused. Catches a
+# future edit that drops the guard and reintroduces "typing 'a' fires Accept".
+
+def test_parse_crop():
+    assert br.parse_crop("10,20,300,200") == {"left": 10, "top": 20, "right": 300, "bottom": 200}
+    assert br.parse_crop(None) is None
+    assert br.parse_crop("") is None
+    assert br.parse_crop("1,2,3") is None            # wrong arity
+    assert br.parse_crop("a,b,c,d") is None           # non-int
+    assert br.parse_crop("300,20,10,200") is None     # right<=left (empty crop)
+
+
+def test_html_lightbox_has_frame_navigation():
+    # Browser-side: the full-screen viewer must offer prev/next + arrow keys, and
+    # clicking a candidate must open the viewer (not silently drop nav as the v2
+    # rebuild did). String-assert the wiring survives future edits.
+    for token in ('function navigateLightbox(', 'id="lb-prev"', 'id="lb-next"',
+                  'id="lb-counter"', "ArrowLeft", "ArrowRight", 'onclick="lightboxFor('):
+        assert token in br.HTML, f"lightbox navigation missing: {token}"
+
+
+def test_html_shows_saved_selection():
+    # The saved crop/mark must be rendered back on the facet, with the server-crop
+    # query param when a crop is stored, so the reviewer sees what was saved.
+    assert "savedshot" in br.HTML
+    assert "&crop=" in br.HTML, "saved-crop preview no longer requests the server crop"
+
+
+def test_html_keeps_single_key_focus_guard():
+    assert "editing||isTyping()" in br.HTML, \
+        "focus-guard removed: single-key verbs would fire while typing in Edit mode"
+
+
+def test_html_istyping_covers_text_inputs():
+    # isTyping must treat INPUT/TEXTAREA/SELECT/contentEditable as 'typing'.
+    for token in ("INPUT", "TEXTAREA", "SELECT", "isContentEditable"):
+        assert token in br.HTML, f"isTyping no longer guards {token}"
 
 
 # ── standalone runner ──────────────────────────────────────────────────────

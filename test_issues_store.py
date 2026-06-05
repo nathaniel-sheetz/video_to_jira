@@ -34,9 +34,10 @@ def _anchor(aid="anc_1", ts=100, quote="it is broken", frame=None, fs="pending")
 
 
 def _issue(iid="iss_a", label="VID-001", sev="S1", anchors=None, status="proposed",
-           cats=None):
+           cats=None, title="a title"):
     return {
         "id": iid, "label": label, "status": status, "severity": sev,
+        "title": title,
         "confidence": "High", "categories": cats or ["Functional"],
         "affected_area": "x", "affected_roles": ["All users"],
         "observed": ["o"], "expected": ["e"], "notes": [],
@@ -100,6 +101,16 @@ def test_rejects_bad_severity():
 def test_rejects_non_enum_category():
     assert any("categories not in enum" in e
                for e in st.validate(_doc([_issue(cats=["UX"])])))
+
+
+def test_rejects_missing_title_on_proposed():
+    iss = _issue(title="")
+    assert any("missing title" in e for e in st.validate(_doc([iss])))
+
+
+def test_rejects_missing_title_on_accepted():
+    iss = _issue(status="accepted", title="   ")
+    assert any("missing title" in e for e in st.validate(_doc([iss])))
 
 
 def test_validate_or_raise():
