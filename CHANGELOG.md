@@ -6,8 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **issues_store**: Single source of truth for the review-console pipeline. Schema v2 `issues.json` with atomic save, full validation (severity, category, title, anchor evidence), renumber-by-severity, merge/split/edit with snapshot, and `validate_or_raise` hard gate.
-- **extract_issues**: Four-pass transcript → grounded `issues.json` harness. Windowed transcript parsing, verbatim-quote grounding with `ts_seconds` derivation, grouping policy enforcement, and `EXTRACT_ISSUES.md` runbook.
-- **html_export**: Static self-contained session report. Embeds screenshots as base64, renders accepted/edited issues with evidence quotes and timestamps, incomplete-anchor banner, and deterministic output keyed on `session.generated_at`.
+- **extract_issues**: Four-pass transcript → grounded `issues.json` harness. Windowed transcript parsing, verbatim-quote grounding with `ts_seconds` derivation, grouping policy enforcement, and `EXTRACT_ISSUES.md` runbook. Run `python extract_issues.py assemble candidates.json <transcript.txt>` to produce a validated `issues.json`.
+- **html_export**: Static self-contained session report. Embeds screenshots as base64, renders accepted/edited issues with evidence quotes and timestamps, incomplete-anchor banner, and deterministic output keyed on `session.generated_at`. Run `python html_export.py [issues.json] [-o report.html]`.
 - **EXTRACT_ISSUES.md**: Runbook for the four-pass extraction workflow (window-extract → merge/group → adversarial audit → validate).
 
 ### Changed
