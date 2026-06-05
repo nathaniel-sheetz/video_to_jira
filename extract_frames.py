@@ -1,107 +1,100 @@
 #!/usr/bin/env python3
 """
-extract_frames.py  —  Step 3: Extract candidate frames from the video.
+extract_frames.py — frame pipeline for the review-console (schema v2).
 
-Reads config.json and the issues markdown file, then for every issue's
-starting timestamp runs ffmpeg at each configured offset to produce JPEGs.
+Driven entirely by issues.json (via issues_store), never by markdown. For every
+anchor on every extractable issue it seeks the video at `anchor.ts_seconds + offset`
+for each session offset and writes one JPEG per offset, then records the results
+as the anchor's `candidate_frames[]`. The human picks one at gate 5; this stage
+only *proposes* — it never sets `selected_frame` (vision ranking is Phase 2).
+
+Disk layout (keyed on stable ids, so renumber/merge/split never orphan a frame):
+
+    <frames_root>/<issue.id>/<anchor.id>/+NNs.jpg
+
+candidate_frames entry shape:
+
+    { "path": "<repo-relative posix>", "offset": int, "rank": int, "score": null }
+
+`rank` is offset order in v1 (1 = first offset); `score` stays null until the
+Phase-2 vision-rank pass fills it in. The ffmpeg call is injected (`extract_fn`)
+so the whole pipeline is testable without a real video.
 
 Usage:
-    python extract_frames.py
+    python extract_frames.py [path/to/issues.json]
+    # falls back to config.json's issues_path, then ./issues.json
 """
+
+from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 
+import issues_store as st
 
 CONFIG_FILE = "config.json"
+DEFAULT_OFFSETS = [0, 2, 5, 10, 20, 30]
+
+# Tombstones (merged_out) carry no anchors; rejected issues are dead — neither
+# needs frames. Everything a human might still confirm does.
+EXTRACTABLE_STATUSES = {"proposed", "accepted", "edited"}
 
 
 # ---------------------------------------------------------------------------
-# Markdown parser
+# Pure helpers (no ffmpeg, no disk) — the testable core
 # ---------------------------------------------------------------------------
 
-def parse_issues(md_path):
+def session_offsets(doc, default=DEFAULT_OFFSETS):
+    return doc.get("session", {}).get("frame_offsets_seconds") or list(default)
+
+
+def default_frames_root(issues_path):
     """
-    Parse all VID issues from a single consolidated markdown file.
-
-    Each issue must start with a line matching:
-        # VID-NNN - Issue Title
-
-    The Timestamps metadata line must match:
-        - **Timestamps:** ~HH:MM:SS–HH:MM:SS, ...
-
-    Only the *start* timestamp of each range is used for frame extraction.
-    Returns a list of dicts with keys: id, title, timestamp_list.
+    Frames live beside the issues.json that describes them. Kept relative (not
+    abspath'd) so the candidate paths written into issues.json stay portable —
+    the file must not bake in one machine's absolute layout.
     """
-    with open(md_path, encoding="utf-8") as f:
-        content = f.read()
+    return os.path.join(os.path.dirname(issues_path), "frames") or "frames"
 
-    sections = re.split(r"(?m)(?=^# VID-)", content)
-    issues = []
 
-    for section in sections:
-        section = section.strip()
-        if not section:
-            continue
+def frame_name(offset):
+    """0 -> '+00s.jpg', 2 -> '+02s.jpg', -5 -> '-05s.jpg'."""
+    sign = "-" if offset < 0 else "+"
+    return f"{sign}{abs(offset):02d}s.jpg"
 
-        lines = section.split("\n")
-        header = re.match(r"# (VID-\d+)\s*[-\u2013]\s*(.+)", lines[0])
-        if not header:
-            continue
 
-        issue = {"id": header.group(1), "title": header.group(2).strip()}
+def candidate_path(frames_root, issue_id, anchor_id, offset):
+    """Repo-relative posix path the console/html can load directly."""
+    p = Path(frames_root) / issue_id / anchor_id / frame_name(offset)
+    return p.as_posix()
 
-        # Find the Timestamps metadata line
-        ts_raw = ""
-        for line in lines[1:15]:
-            m = re.match(r"-\s+\*\*Timestamps:\*\*\s*(.*)", line, re.IGNORECASE)
-            if m:
-                ts_raw = m.group(1).strip()
-                break
 
-        # Extract the opening timestamp of every range  (e.g. "~00:20:16–00:21:59")
-        # Pattern matches the first HH:MM:SS in each comma-separated segment.
-        issue["timestamp_list"] = re.findall(r"(\d{2}:\d{2}:\d{2})", ts_raw)[::2] or \
-                                   re.findall(r"(\d{2}:\d{2}:\d{2})", ts_raw)
-        issues.append(issue)
-
-    return issues
+def build_candidates(frames_root, issue_id, anchor_id, offsets):
+    """The candidate_frames list for one anchor — paths only, ffmpeg not run yet."""
+    return [
+        {
+            "path": candidate_path(frames_root, issue_id, anchor_id, offset),
+            "offset": offset,
+            "rank": i + 1,          # v1: offset order; vision-rank reorders in Phase 2
+            "score": None,
+        }
+        for i, offset in enumerate(offsets)
+    ]
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# ffmpeg side effect (default extractor)
 # ---------------------------------------------------------------------------
 
-def ts_to_seconds(ts):
-    h, m, s = (int(x) for x in ts.split(":"))
-    return h * 3600 + m * 60 + s
-
-
-def seconds_to_hms(total):
-    h = total // 3600
-    m = (total % 3600) // 60
-    s = total % 60
-    return f"{h:02d}:{m:02d}:{s:02d}"
-
-
-def ts_to_dir_name(ts):
-    """'00:20:16' → 'ts-00-20-16'"""
-    return "ts-" + ts.replace(":", "-")
-
-
-# ---------------------------------------------------------------------------
-# Frame extraction
-# ---------------------------------------------------------------------------
-
-def extract_frame(video_path, seek_ts, out_path, ffmpeg="ffmpeg"):
+def ffmpeg_extract(video, seek_seconds, out_path, ffmpeg="ffmpeg"):
+    """Grab a single frame at `seek_seconds`. Returns True on success."""
     cmd = [
         ffmpeg, "-y",
-        "-ss", seek_ts,
-        "-i", video_path,
+        "-ss", str(seek_seconds),
+        "-i", video,
         "-vframes", "1",
         "-q:v", "2",
         out_path,
@@ -109,64 +102,126 @@ def extract_frame(video_path, seek_ts, out_path, ffmpeg="ffmpeg"):
     result = subprocess.run(cmd, capture_output=True)
     if result.returncode != 0:
         print(f"    [WARN] ffmpeg failed for {out_path}")
-        stderr_text = result.stderr.decode(errors='replace')
-        # Print last 400 chars — ffmpeg header is verbose, error is at the end
-        print(f"    {stderr_text[-400:].strip()}")
+        print(f"    {result.stderr.decode(errors='replace')[-400:].strip()}")
+        return False
+    return True
 
 
-def main():
-    if not os.path.exists(CONFIG_FILE):
-        sys.exit(f"Config file not found: {CONFIG_FILE}")
+# ---------------------------------------------------------------------------
+# Extraction (mutates the doc in place)
+# ---------------------------------------------------------------------------
 
-    with open(CONFIG_FILE) as f:
-        config = json.load(f)
+def extract_anchor(anchor, *, video, frames_root, issue_id, offsets,
+                   extract_fn, force=False):
+    """
+    Populate one anchor's candidate_frames and run the extractor for each offset.
+    Idempotent: an offset whose file already exists is skipped unless `force`.
+    Selection (`selected_frame`, `frame_status`) is the human's gate-5 call and is
+    left untouched. Returns (extracted, skipped) counts.
+    """
+    anchor_id = anchor["id"]
+    base = anchor["ts_seconds"]
+    candidates = build_candidates(frames_root, issue_id, anchor_id, offsets)
 
-    video_path   = config["video_path"]
-    issues_path  = config["issues_path"]
-    output_dir   = str(Path(config["output_dir"]) / Path(video_path).stem)
-    offsets      = config["frame_offsets_seconds"]
-    ffmpeg_bin   = config.get("ffmpeg_path", "ffmpeg")
-
-    if not os.path.exists(video_path):
-        sys.exit(f"Video not found: {video_path}")
-    if not os.path.exists(issues_path):
-        sys.exit(f"Issues file not found: {issues_path}")
-
-    issues = parse_issues(issues_path)
-    print(f"Parsed {len(issues)} issues from {issues_path}")
-
-    total_frames = sum(len(i["timestamp_list"]) * len(offsets) for i in issues)
-    print(f"Extracting up to {total_frames} frames into '{output_dir}/'")
-    print()
-
-    done = 0
-    for issue in issues:
-        vid = issue["id"]
-        if not issue["timestamp_list"]:
-            print(f"  {vid}: no timestamps — skipping")
+    extracted = skipped = 0
+    for cand in candidates:
+        out_path = cand["path"]
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        if os.path.exists(out_path) and not force:
+            skipped += 1
             continue
+        seek = max(0, base + cand["offset"])   # never seek before the start of the video
+        if extract_fn(video, seek, out_path):
+            extracted += 1
+        else:
+            skipped += 1
 
-        for ts in issue["timestamp_list"]:
-            base_sec = ts_to_seconds(ts)
-            ts_dir   = ts_to_dir_name(ts)
-            out_folder = Path(output_dir) / vid / ts_dir
-            out_folder.mkdir(parents=True, exist_ok=True)
+    anchor["candidate_frames"] = candidates
+    return extracted, skipped
 
-            for offset in offsets:
-                target_sec = base_sec + offset
-                seek_ts    = seconds_to_hms(target_sec)
-                label      = f"+{offset:02d}s"
-                out_file   = str(out_folder / f"{label}.jpg")
 
-                if os.path.exists(out_file):
-                    print(f"  {vid}/{ts_dir}/{label}.jpg  (exists, skipped)")
-                else:
-                    print(f"  {vid}/{ts_dir}/{label}.jpg  @ {seek_ts}")
-                    extract_frame(video_path, seek_ts, out_file, ffmpeg=ffmpeg_bin)
+def extract_all(doc, *, video, frames_root, offsets=None, extract_fn=ffmpeg_extract,
+                force=False):
+    """
+    Walk every extractable issue/anchor and populate candidate_frames. Mutates
+    `doc` in place; the caller persists it (atomically) via issues_store.save.
+    Returns a summary dict.
+    """
+    if offsets is None:
+        offsets = session_offsets(doc)
 
-                done += 1
+    anchors = frames_extracted = frames_skipped = 0
+    for issue in doc["issues"]:
+        if issue.get("status") not in EXTRACTABLE_STATUSES:
+            continue
+        for anchor in issue.get("anchors", []):
+            e, s = extract_anchor(
+                anchor, video=video, frames_root=frames_root,
+                issue_id=issue["id"], offsets=offsets,
+                extract_fn=extract_fn, force=force,
+            )
+            anchors += 1
+            frames_extracted += e
+            frames_skipped += s
 
-    print(f"\nDone. {done} frames processed.")
+    return {
+        "anchors": anchors,
+        "frames_extracted": frames_extracted,
+        "frames_skipped": frames_skipped,
+        "offsets": offsets,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def _resolve_issues_path(argv):
+    if len(argv) > 1:
+        return argv[1]
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE) as f:
+            cfg = json.load(f)
+        if cfg.get("issues_path", "").endswith(".json"):
+            return cfg["issues_path"]
+    return "issues.json"
+
+
+def main(argv=None):
+    argv = argv if argv is not None else sys.argv
+    issues_path = _resolve_issues_path(argv)
+    if not os.path.exists(issues_path):
+        sys.exit(f"issues.json not found: {issues_path}")
+
+    doc = st.load(issues_path)
+
+    cfg = {}
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE) as f:
+            cfg = json.load(f)
+
+    # config.json overrides the session's recorded video path (it may be a
+    # placeholder in a hand-made fixture); ffmpeg binary likewise.
+    video = cfg.get("video_path") or doc.get("session", {}).get("video")
+    ffmpeg_bin = cfg.get("ffmpeg_path", "ffmpeg")
+    frames_root = cfg.get("frames_root") or default_frames_root(issues_path)
+
+    if not video or not os.path.exists(video):
+        sys.exit(f"Video not found: {video!r} (set video_path in {CONFIG_FILE})")
+
+    def extractor(v, seek, out):
+        return ffmpeg_extract(v, seek, out, ffmpeg=ffmpeg_bin)
+
+    print(f"Extracting frames for {issues_path}")
+    print(f"  video:  {video}")
+    print(f"  frames: {frames_root}/<issue.id>/<anchor.id>/")
+    summary = extract_all(doc, video=video, frames_root=frames_root,
+                          extract_fn=extractor)
+
+    st.save(issues_path, doc)   # atomic + validates the schema before writing
+    print(f"\nDone. {summary['anchors']} anchors · "
+          f"{summary['frames_extracted']} extracted · "
+          f"{summary['frames_skipped']} skipped (offsets {summary['offsets']}).")
 
 
 if __name__ == "__main__":
