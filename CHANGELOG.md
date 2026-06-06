@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1.0] - 2026-06-06
+
+### Added
+- **HTML export TOC**: Long reports are now navigable. The issues report opens with a table of contents — issue ID, severity chip, and title — with anchor links to each issue section and a "↑ Contents" back-link on every article.
+
+### Changed
+- **Observed block promoted to primary**: The most important signal is now first. In both the review console and the HTML export, the Observed section is rendered first with a prominent green accent border and larger text. Evidence is de-emphasised to a muted supporting role. Expected and Evidence are stacked vertically (replacing the two-column Observed/Expected layout).
+
 ## [0.1.0.0] - 2026-06-05
 
 ### Added

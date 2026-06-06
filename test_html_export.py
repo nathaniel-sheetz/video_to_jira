@@ -158,6 +158,64 @@ def test_embed_missing_file_returns_none():
     assert hx.embed_image("frames/does/not/exist.jpg") is None
 
 
+# ── TOC and navigation ─────────────────────────────────────────────────────
+
+def test_toc_rendered_when_issues_present():
+    doc = _doc([_issue()])
+    out = hx.render_html(doc, embed_fn=FAKE)
+    assert 'class="toc"' in out
+    assert 'href="#iss-VID-001"' in out
+
+
+def test_toc_absent_when_no_issues():
+    doc = _doc([_issue(status="proposed")])
+    out = hx.render_html(doc, embed_fn=FAKE)
+    assert 'class="toc"' not in out
+
+
+def test_article_id_anchor_matches_toc_href():
+    doc = _doc([_issue()])
+    out = hx.render_html(doc, embed_fn=FAKE)
+    assert 'id="iss-VID-001"' in out
+
+
+def test_totop_link_present_in_article():
+    doc = _doc([_issue()])
+    out = hx.render_html(doc, embed_fn=FAKE)
+    assert 'class="totop"' in out
+    assert 'href="#top"' in out
+
+
+def test_toc_severity_fallback_shows_question_mark():
+    iss = _issue()
+    iss["severity"] = ""
+    doc = _doc([iss])
+    out = hx.render_html(doc, embed_fn=FAKE)
+    toc_section = out[out.index('class="toc"'):out.index('</nav>')] if 'class="toc"' in out else ""
+    assert "?" in toc_section
+
+
+# ── helper unit tests ───────────────────────────────────────────────────────
+
+def test_list_block_cls_parameter():
+    result = hx._list_block("Observed", ["foo"], cls="block observed")
+    assert 'class="block observed"' in result
+    assert "foo" in result
+
+
+def test_issue_anchor_uses_label():
+    assert hx._issue_anchor({"id": "iss_1", "label": "VID-001"}) == "iss-VID-001"
+
+
+def test_issue_anchor_falls_back_to_id():
+    assert hx._issue_anchor({"id": "iss_1", "label": None}) == "iss-iss_1"
+
+
+def test_issue_anchor_escapes_html_chars():
+    result = hx._issue_anchor({"id": "iss_1", "label": 'A&B'})
+    assert "&amp;" in result
+
+
 # ── standalone runner ──────────────────────────────────────────────────────
 
 if __name__ == "__main__":

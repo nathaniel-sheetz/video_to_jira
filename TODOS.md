@@ -8,6 +8,6 @@
 
 - **_resolve_issues_path copy-paste**
   **Priority:** P2
-  The CLI helper that finds the `issues.json` path (check argv[1], then `config.json:issues_path`, then `'issues.json'`) is duplicated in `build_review.py`, `extract_frames.py`, and `html_export.py`. Extract to a shared utility or into `issues_store` so changes propagate everywhere.
+  The CLI helper that finds the `issues.json` path (check argv[1], then `config.json:issues_path`, then `'issues.json'`) is duplicated in `build_review.py`, `extract_frames.py`, `html_export.py`, and `extract_issues.py` (4 copies as of v0.1.1.0). Extract to a shared utility or into `issues_store` so changes propagate everywhere.
 
 ## Completed
