@@ -57,7 +57,7 @@ CATEGORIES = {
 }
 STATUSES = {"proposed", "accepted", "rejected", "edited", "merged_out"}
 FRAME_STATUSES = {"pending", "selected", "skipped"}
-REJECT_REASONS = {"narration", "duplicate", "not-a-defect", "wont-fix"}
+REJECT_REASONS = {"narration", "duplicate", "not-a-defect", "wont-fix", "not-in-scope"}
 
 # Issue-level fields snapshotted under `original` the first time a human edits.
 EDITABLE_FIELDS = ("title", "severity", "categories", "affected_area",
