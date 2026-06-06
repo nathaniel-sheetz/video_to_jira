@@ -277,16 +277,22 @@ h1.title{font-size:20px;font-weight:600;margin:4px 0 2px;width:100%}
 .btn-accept{background:#15803d;color:#fff}.btn-accept:hover{background:#16a34a}
 .btn-reject{background:#3a1a1a;color:#f87171;border:1px solid #7f1d1d}.btn-reject:hover{background:#4a1f1f}
 .btn-edit{background:#262626;color:#ddd;border:1px solid #3a3a3a}.btn-edit:hover{background:#333}
-.evidence{margin:16px 0;border-left:3px solid #3b3b8a;background:#16162a;padding:10px 14px;border-radius:0 6px 6px 0}
-.evidence .lab{font-size:10px;font-weight:700;color:#818cf8;letter-spacing:.08em;margin-bottom:6px}
-.ev-quote{font-size:13px;color:#cdd;line-height:1.5;margin-bottom:3px}
-.ev-quote .ts{color:#a5b4fc;font-weight:700;font-size:12px;margin-left:6px}
-.ev-quote .jump{color:#666;font-size:11px;margin-left:8px;cursor:pointer;text-decoration:underline}
-.oe{display:flex;gap:24px;margin:12px 0;flex-wrap:wrap}
-.oe .col{flex:1;min-width:220px}
-.oe .lab{font-size:10px;font-weight:700;color:#60a5fa;letter-spacing:.06em;margin-bottom:4px}
-.oe ul{list-style:none;font-size:13px;color:#ccc;line-height:1.5}
-.oe li::before{content:'\2013 \00a0';color:#555}
+/* observed — primary, highlighted */
+.observed{margin:16px 0;border-left:4px solid #22c55e;background:#13251a;padding:12px 16px;border-radius:0 6px 6px 0}
+.observed .lab{font-size:11px;font-weight:700;color:#4ade80;letter-spacing:.08em;margin-bottom:6px}
+.observed ul{list-style:none;font-size:15px;color:#eafaf0;line-height:1.55}
+.observed li::before{content:'\2013 \00a0';color:#3b6b4a}
+/* evidence — muted, supporting */
+.evidence{margin:12px 0;border-left:2px solid #2a2a3a;background:#131320;padding:8px 12px;border-radius:0 5px 5px 0}
+.evidence .lab{font-size:9px;font-weight:700;color:#6b6f90;letter-spacing:.08em;margin-bottom:5px}
+.ev-quote{font-size:12px;color:#8a8f9c;line-height:1.45;margin-bottom:3px}
+.ev-quote .ts{color:#7c84b0;font-weight:700;font-size:11px;margin-left:6px}
+.ev-quote .jump{color:#555;font-size:11px;margin-left:8px;cursor:pointer;text-decoration:underline}
+/* expected */
+.expected{margin:12px 0}
+.expected .lab{font-size:10px;font-weight:700;color:#60a5fa;letter-spacing:.06em;margin-bottom:4px}
+.expected ul{list-style:none;font-size:13px;color:#ccc;line-height:1.5}
+.expected li::before{content:'\2013 \00a0';color:#555}
 .facets{margin-top:18px;border-top:1px solid #2a2a2a;padding-top:14px}
 .facets>.lab{font-size:11px;font-weight:700;color:#60a5fa;letter-spacing:.06em;margin-bottom:10px}
 .facet{margin-bottom:16px;padding:10px;border-radius:8px;border:1px solid #242424}
@@ -446,7 +452,12 @@ function render(){
     +`<button class="btn btn-edit" onclick="enterEdit()">✎ Edit<span class="k">E</span></button>`
     +`</div>`;
 
-  // evidence (one quote per anchor)
+  const ul=(arr)=>'<ul>'+(arr||[]).map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>';
+
+  // observed — primary, highlighted
+  h+=`<div class="observed"><div class="lab">OBSERVED</div>${ul(iss.observed)}</div>`;
+
+  // evidence (one quote per anchor) — muted, supporting
   h+=`<div class="evidence"><div class="lab">EVIDENCE</div>`;
   iss.anchors.forEach(a=>{
     h+=`<div class="ev-quote">&ldquo;${esc(a.quote)}&rdquo;`
@@ -455,10 +466,8 @@ function render(){
   });
   h+=`</div>`;
 
-  // observed / expected
-  const ul=(arr)=>'<ul>'+(arr||[]).map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>';
-  h+=`<div class="oe"><div class="col"><div class="lab">OBSERVED</div>${ul(iss.observed)}</div>`
-    +`<div class="col"><div class="lab">EXPECTED</div>${ul(iss.expected)}</div></div>`;
+  // expected
+  h+=`<div class="expected"><div class="lab">EXPECTED</div>${ul(iss.expected)}</div>`;
 
   // facets / screenshots
   h+=`<div class="facets"><div class="lab">SCREENSHOTS &middot; ${iss.anchors.length} facet${iss.anchors.length>1?'s':''}</div>`;
