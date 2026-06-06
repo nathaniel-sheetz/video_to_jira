@@ -88,12 +88,17 @@ def _esc(text):
     return html.escape("" if text is None else str(text))
 
 
-def _list_block(label, items):
+def _list_block(label, items, cls="block"):
     items = [i for i in (items or []) if str(i).strip()]
     if not items:
         return ""
     lis = "".join(f"<li>{_esc(i)}</li>" for i in items)
-    return f'<div class="block"><div class="lab">{label}</div><ul>{lis}</ul></div>'
+    return f'<div class="{cls}"><div class="lab">{label}</div><ul>{lis}</ul></div>'
+
+
+def _issue_anchor(iss):
+    """Stable in-page anchor id for an issue (used by the TOC links)."""
+    return "iss-" + _esc(str(iss.get("label") or iss["id"]))
 
 
 def _facet_block(anchor, embed_fn):
@@ -130,6 +135,19 @@ def render_html(doc, embed_fn=embed_image):
                  f'<div class="sub">{len(issues)} issue(s){" · " + _esc(tally) if tally else ""}'
                  f'{" · " + _esc(generated) if generated else ""}</div></header>')
 
+    if issues:
+        toc_rows = "".join(
+            f'<li><a href="#{_issue_anchor(iss)}">'
+            f'<span class="toc-id">{_esc(iss.get("label") or iss["id"])}</span>'
+            f'<span class="sev {_esc(iss.get("severity", ""))}">'
+            f'{_esc(iss.get("severity", "") or "?")}</span>'
+            f'<span class="toc-title">{_esc(iss.get("title") or "(untitled)")}</span>'
+            f'</a></li>'
+            for iss in issues
+        )
+        parts.append(f'<nav class="toc" id="top"><div class="lab">Contents</div>'
+                     f'<ol>{toc_rows}</ol></nav>')
+
     if incomplete:
         rows = ", ".join(_esc(i.get("label") or i["id"]) for i in incomplete)
         parts.append(f'<div class="warn"><b>{len(incomplete)} accepted issue(s) have facets '
@@ -160,11 +178,13 @@ def render_html(doc, embed_fn=embed_image):
         facets = "".join(_facet_block(a, embed_fn) for a in iss.get("anchors", []))
 
         parts.append(
-            f'<article><div class="ihead"><span class="id">{_esc(iss.get("label") or iss["id"])}'
-            f'</span>{edited}<h2>{_esc(iss.get("title") or "(untitled)")}</h2></div>'
+            f'<article id="{_issue_anchor(iss)}">'
+            f'<div class="ihead"><span class="id">{_esc(iss.get("label") or iss["id"])}'
+            f'</span>{edited}<a class="totop" href="#top">↑ Contents</a>'
+            f'<h2>{_esc(iss.get("title") or "(untitled)")}</h2></div>'
             f'<div class="meta">{meta}</div>'
+            f'{_list_block("Observed", iss.get("observed"), cls="block observed")}'
             f'<div class="evidence"><div class="lab">Evidence</div>{ev}</div>'
-            f'{_list_block("Observed", iss.get("observed"))}'
             f'{_list_block("Expected", iss.get("expected"))}'
             f'{_list_block("Notes", iss.get("notes"))}'
             f'<div class="block"><div class="lab">Screenshots</div>'
@@ -180,7 +200,7 @@ _HEAD = """<!DOCTYPE html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f6f7f9;color:#1f2328;line-height:1.5;padding:32px 20px}
-header,article,.warn,.empty{max-width:900px;margin:0 auto}
+header,article,.warn,.empty,.toc{max-width:900px;margin:0 auto}
 header{margin-bottom:22px}
 header h1{font-size:26px}
 .sub{color:#666;font-size:13px;margin-top:4px}
@@ -190,6 +210,8 @@ article{background:#fff;border:1px solid #e2e4e8;border-radius:10px;padding:22px
 .ihead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .id{font-size:12px;font-weight:700;color:#2563eb;letter-spacing:.05em}
 .badge{font-size:10px;font-weight:700;background:#e7f5ec;color:#15803d;padding:2px 7px;border-radius:9px;text-transform:uppercase}
+.totop{margin-left:auto;font-size:11px;color:#aab;text-decoration:none;flex-shrink:0}
+.totop:hover{color:#2563eb}
 .ihead h2{font-size:19px;font-weight:600;width:100%}
 .meta{font-size:12px;color:#666;margin:4px 0 14px}
 .sev{font-weight:700}.sev.S0,.sev.S1{color:#dc2626}.sev.S2{color:#d97706}.sev.S3,.sev.S4{color:#6b7280}
@@ -198,9 +220,25 @@ article{background:#fff;border:1px solid #e2e4e8;border-radius:10px;padding:22px
 .block ul{list-style:none}
 .block li{font-size:14px;padding-left:16px;position:relative}
 .block li::before{content:'–';position:absolute;left:0;color:#aaa}
-.evidence{background:#f0f3ff;border-left:3px solid #6366f1;border-radius:0 6px 6px 0;padding:10px 14px;margin:12px 0}
-.quote{font-size:13px;color:#3a3f6b;margin:3px 0}
-.ts{color:#6366f1;font-weight:700;font-size:12px;margin-left:6px}
+/* observed — primary, highlighted */
+.observed{background:#ecfdf3;border-left:4px solid #22c55e;border-radius:0 6px 6px 0;padding:12px 16px;margin:14px 0}
+.observed .lab{color:#15803d}
+.observed li{font-size:16px;color:#14532d}
+.observed li::before{color:#86c79b}
+/* evidence — muted, supporting */
+.evidence{background:#f7f8fa;border-left:2px solid #d6d8e2;border-radius:0 5px 5px 0;padding:8px 12px;margin:12px 0}
+.evidence .lab{color:#8a8f9c}
+.quote{font-size:12px;color:#8a8f9c;margin:3px 0}
+.ts{color:#9aa0c0;font-weight:700;font-size:11px;margin-left:6px}
+/* table of contents */
+.toc{background:#fff;border:1px solid #e2e4e8;border-radius:10px;padding:16px 22px;margin-bottom:18px}
+.toc ol{list-style:none;margin-top:6px}
+.toc li{margin:2px 0}
+.toc a{display:flex;align-items:baseline;gap:10px;padding:5px 6px;border-radius:6px;text-decoration:none;color:#1f2328}
+.toc a:hover{background:#f0f3ff}
+.toc .toc-id{font-size:12px;font-weight:700;color:#2563eb;letter-spacing:.05em;flex-shrink:0;min-width:64px}
+.toc .sev{font-size:11px;flex-shrink:0;min-width:26px}
+.toc .toc-title{font-size:14px}
 .facets{display:flex;flex-wrap:wrap;gap:16px}
 .facet{flex:1;min-width:260px;max-width:440px}
 .fcap{font-size:12px;color:#444;margin-bottom:5px}
