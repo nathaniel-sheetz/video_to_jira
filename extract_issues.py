@@ -69,10 +69,10 @@ import os
 import re
 import sys
 
+import config
 import issues_store as st
 
-CONFIG_FILE = "config.json"
-DEFAULT_OFFSETS = [0, 2, 5, 10, 20, 30]
+from config import CONFIG_FILE, DEFAULT_OFFSETS
 
 # Pass-1 windowing defaults, in cue count. Tuned for the dense ~73-min
 # 2_Task.txt (~870 cues): ~10 windows, 30-cue overlap so a defect described
@@ -436,13 +436,6 @@ def extract(transcript_text, session, *, pass1_fn,
 # CLI
 # ---------------------------------------------------------------------------
 
-def _load_config(path=CONFIG_FILE):
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
 def _session_id_from_path(transcript):
     """`projects/<session>/input/x.txt` -> `<session>` (skip a wrapping input/)."""
     parent = os.path.basename(os.path.dirname(os.path.abspath(transcript)))
@@ -461,7 +454,7 @@ def _resolve_transcript(arg, cfg):
 
 
 def _cmd_windows(args):
-    cfg = _load_config(args.config)
+    cfg, _ = config.load_config(config=args.config)
     path = _resolve_transcript(args.transcript, cfg)
     with open(path, encoding="utf-8") as f:
         cues = parse_transcript(f.read())
@@ -479,7 +472,7 @@ def _cmd_windows(args):
 
 
 def _cmd_assemble(args):
-    cfg = _load_config(args.config)
+    cfg, _ = config.load_config(config=args.config)
     transcript = _resolve_transcript(args.transcript, cfg)
     with open(transcript, encoding="utf-8") as f:
         cues = parse_transcript(f.read())
@@ -521,8 +514,10 @@ def _cmd_assemble(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default=CONFIG_FILE,
+    parser.add_argument("--config", default=None,
                         help="config.json (paths, offsets). Default: config.json")
+    parser.add_argument("--project",
+                        help="project name -> projects/<name>/config.json")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     pw = sub.add_parser("windows", help="dump pass-1 windows for the agent to read")
@@ -540,6 +535,9 @@ def main(argv=None):
     pa.set_defaults(func=_cmd_assemble)
 
     args = parser.parse_args(argv)
+    # --project is sugar for projects/<name>/config.json; --config names it
+    # directly; neither falls back to the repo-root config.json.
+    args.config = config.resolve_config_path(args.project, args.config)
     args.func(args)
 
 

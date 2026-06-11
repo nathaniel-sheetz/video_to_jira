@@ -12,8 +12,11 @@ skipped), that selection state is never touched, negative-offset clamping, and a
 full round-trip back through issues_store.save (atomic + validated).
 """
 
+import json
 import os
 import tempfile
+
+import pytest
 
 import issues_store as st
 import extract_frames as ef
@@ -199,6 +202,52 @@ def test_result_validates_and_roundtrips():
         p = os.path.join(d, "issues.json")
         st.save(p, doc)                 # raises if extraction produced an invalid doc
         assert st.load(p) == doc
+
+
+# ---------------------------------------------------------------------------
+# main() CLI wiring
+# ---------------------------------------------------------------------------
+
+def test_main_project_flag_routes_to_project_config():
+    # --project <name> resolves to projects/<name>/config.json.
+    # A config without video_path leads to sys.exit("Video not found"), not
+    # "issues.json not found", proving config was loaded (not skipped).
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            proj_dir = os.path.join("projects", "ef-test")
+            os.makedirs(proj_dir)
+            issues_path = os.path.join(proj_dir, "issues.json")
+            doc = {"schema_version": 2, "session": {"id": "s", "generated_at": "2026-01-01T00:00:00Z"}, "issues": []}
+            st.save(issues_path, doc)
+            cfg_data = {"issues_path": issues_path}
+            with open(os.path.join(proj_dir, "config.json"), "w", encoding="utf-8") as f:
+                json.dump(cfg_data, f)
+            with pytest.raises(SystemExit) as exc:
+                ef.main(["--project", "ef-test"])
+            assert "Video not found" in str(exc.value)
+        finally:
+            os.chdir(cwd)
+
+
+def test_main_config_flag_loads_explicit_config():
+    # --config <path> loads that specific file.
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            issues_path = os.path.join(d, "issues.json")
+            doc = {"schema_version": 2, "session": {"id": "s", "generated_at": "2026-01-01T00:00:00Z"}, "issues": []}
+            st.save(issues_path, doc)
+            cfg_path = os.path.join(d, "my_config.json")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({"issues_path": issues_path}, f)
+            with pytest.raises(SystemExit) as exc:
+                ef.main(["--config", cfg_path])
+            assert "Video not found" in str(exc.value)
+        finally:
+            os.chdir(cwd)
 
 
 # ---------------------------------------------------------------------------

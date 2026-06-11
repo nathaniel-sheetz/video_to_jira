@@ -15,6 +15,7 @@ Usage:
     python generate_pptx.py
 """
 
+import argparse
 import copy
 import json
 import os
@@ -28,7 +29,7 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.oxml.ns import qn
 
-CONFIG_FILE = "config.json"
+import config as cfg_mod
 
 SEVERITY_COLORS = {
     "S0": RGBColor(0xC0, 0x00, 0x00),  # red
@@ -270,17 +271,20 @@ def insert_screenshot(slide, shape_name, image_path, crop=None):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main():
-    if not os.path.exists(CONFIG_FILE):
-        sys.exit(f"Config not found: {CONFIG_FILE}")
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Generate the PowerPoint deck from issues + selections.")
+    p.add_argument("--project", help="project name -> projects/<name>/config.json")
+    p.add_argument("--config", dest="config_path", help="config.json path")
+    args = p.parse_args(argv)
 
-    with open(CONFIG_FILE) as f:
-        config = json.load(f)
+    cfg, cfg_path = cfg_mod.load_config(project=args.project, config=args.config_path)
+    if not cfg:
+        sys.exit(f"Config not found: {cfg_path}")
 
-    issues_path    = config["issues_path"]
-    selections_path = config["selections_path"]
-    template_path  = config["template_path"]
-    output_path    = config["output_pptx"]
+    issues_path    = cfg["issues_path"]
+    selections_path = cfg["selections_path"]
+    template_path  = cfg["template_path"]
+    output_path    = cfg["output_pptx"]
 
     for path in (issues_path, template_path):
         if not os.path.exists(path):

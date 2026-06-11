@@ -22,12 +22,14 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import base64
 import html
 import io
 import os
 import sys
 
+import config
 import issues_store as st
 from build_review import is_within          # reuse the console's hardened guard
 
@@ -251,27 +253,18 @@ article{background:#fff;border:1px solid #e2e4e8;border-radius:10px;padding:22px
 # CLI
 # ---------------------------------------------------------------------------
 
-def _resolve_issues_path(args):
-    for a in args:
-        if a.endswith(".json"):
-            return a
-    if os.path.exists("config.json"):
-        import json
-        with open("config.json") as f:
-            cfg = json.load(f)
-        if cfg.get("issues_path", "").endswith(".json"):
-            return cfg["issues_path"]
-    return "issues.json"
-
-
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
-    issues_path = _resolve_issues_path(argv)
-    out_path = None
-    if "-o" in argv:
-        out_path = argv[argv.index("-o") + 1]
-    if out_path is None:
-        out_path = os.path.join(os.path.dirname(issues_path), "review_report.html")
+    p = argparse.ArgumentParser(description="Export a self-contained HTML report from issues.json.")
+    p.add_argument("issues", nargs="?", help="issues.json (default: config.issues_path)")
+    p.add_argument("--project", help="project name -> projects/<name>/config.json")
+    p.add_argument("--config", dest="config_path", help="config.json path")
+    p.add_argument("-o", dest="out", help="output HTML path (default: <issues_dir>/review_report.html)")
+    args = p.parse_args(argv)
+
+    cfg, _ = config.load_config(project=args.project, config=args.config_path)
+    issues_path = config.resolve_issues_path(args.issues, cfg)
+    out_path = args.out or os.path.join(os.path.dirname(issues_path), "review_report.html")
 
     if not os.path.exists(issues_path):
         raise SystemExit(f"issues.json not found: {issues_path}")

@@ -406,6 +406,42 @@ def test_cli_assemble_writes_validated_issues():
 
 
 # ---------------------------------------------------------------------------
+# main() CLI --project wiring
+# ---------------------------------------------------------------------------
+
+def test_main_project_flag_resolves_config_path():
+    # --project <name> sugar: args.config is rewritten to
+    # projects/<name>/config.json before the subcommand runs.
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            proj_dir = os.path.join("projects", "ei-test")
+            os.makedirs(proj_dir)
+            # Provide a real transcript so the windows command can run
+            transcript = "00:00:01.000 --> 00:00:02.000\nhello world\n"
+            tx_path = os.path.join(proj_dir, "transcript.vtt")
+            with open(tx_path, "w", encoding="utf-8") as f:
+                f.write(transcript)
+            cfg_data = {"transcript_path": tx_path, "issues_path": "issues.json"}
+            with open(os.path.join(proj_dir, "config.json"), "w", encoding="utf-8") as f:
+                json.dump(cfg_data, f)
+            # Run windows subcommand with --project; if it processes without
+            # "config not found" errors, the --project wiring worked.
+            ex.main(["--project", "ei-test", "windows", tx_path, "--text"])
+        finally:
+            os.chdir(cwd)
+
+
+def test_resolve_transcript_no_arg_no_config_exits():
+    try:
+        ex._resolve_transcript(None, {})
+        assert False, "expected SystemExit"
+    except SystemExit as e:
+        assert "No transcript given" in str(e)
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner (no pytest required)
 # ---------------------------------------------------------------------------
 
