@@ -12,7 +12,11 @@ and banner, deterministic output, skipped-vs-picked facet rendering, and the
 is_within read-path guard.
 """
 
+import json
 import os
+import tempfile
+
+import pytest
 
 import issues_store as st
 import html_export as hx
@@ -214,6 +218,102 @@ def test_issue_anchor_falls_back_to_id():
 def test_issue_anchor_escapes_html_chars():
     result = hx._issue_anchor({"id": "iss_1", "label": 'A&B'})
     assert "&amp;" in result
+
+
+# ── --project CLI wiring ─────────────────────────────────────────────────────
+
+def test_main_project_resolves_under_projects():
+    """main --project <name> reads projects/<name>/config.json and writes the
+    report beside that project's issues.json (no root config.json involved)."""
+    name = "tmp-session"
+    anchor = _anchor(fs="skipped", sel=False)        # no image -> no Pillow/JPEG needed
+    doc = _doc([_issue(status="accepted", anchors=[anchor])])
+
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            proj = os.path.join("projects", name)
+            os.makedirs(proj)
+            issues_path = os.path.join(proj, "issues.json")
+            st.save(issues_path, doc)
+            with open(os.path.join(proj, "config.json"), "w", encoding="utf-8") as f:
+                json.dump({"issues_path": issues_path}, f)
+
+            hx.main(["--project", name])
+
+            assert os.path.exists(os.path.join(proj, "review_report.html"))
+        finally:
+            os.chdir(cwd)
+
+
+# ── main() CLI --config and -o wiring ─────────────────────────────────────
+
+def test_main_config_flag_loads_explicit_config():
+    """main --config <path> reads that config file and resolves issues_path from it."""
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            name = "cfg-flag-test"
+            proj = os.path.join("projects", name)
+            os.makedirs(proj)
+            anchor = _anchor(fs="skipped", sel=False)
+            doc = _doc([_issue(status="accepted", anchors=[anchor])])
+            issues_path = os.path.join(proj, "issues.json")
+            st.save(issues_path, doc)
+            cfg_path = os.path.join(d, "explicit.json")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({"issues_path": issues_path}, f)
+
+            hx.main(["--config", cfg_path])
+
+            assert os.path.exists(os.path.join(proj, "review_report.html"))
+        finally:
+            os.chdir(cwd)
+
+
+def test_main_explicit_output_path():
+    """-o <path> writes the HTML to that specific path instead of the default."""
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            name = "out-flag-test"
+            proj = os.path.join("projects", name)
+            os.makedirs(proj)
+            anchor = _anchor(fs="skipped", sel=False)
+            doc = _doc([_issue(status="accepted", anchors=[anchor])])
+            issues_path = os.path.join(proj, "issues.json")
+            st.save(issues_path, doc)
+            with open(os.path.join(proj, "config.json"), "w", encoding="utf-8") as f:
+                json.dump({"issues_path": issues_path}, f)
+
+            custom_out = os.path.join(d, "custom_report.html")
+            hx.main(["--project", name, "-o", custom_out])
+
+            assert os.path.exists(custom_out)
+        finally:
+            os.chdir(cwd)
+
+
+def test_main_exits_when_issues_not_found():
+    with pytest.raises(SystemExit) as exc:
+        hx.main(["--config", "does_not_exist_xyz.json"])
+    assert "issues.json not found" in str(exc.value)
+
+
+def test_main_exits_when_issues_invalid():
+    with tempfile.TemporaryDirectory() as d:
+        bad_path = os.path.join(d, "issues.json")
+        with open(bad_path, "w", encoding="utf-8") as f:
+            json.dump({"schema_version": 1}, f)
+        cfg_path = os.path.join(d, "cfg.json")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump({"issues_path": bad_path}, f)
+        with pytest.raises(SystemExit) as exc:
+            hx.main(["--config", cfg_path])
+        assert "invalid" in str(exc.value).lower()
 
 
 # ── standalone runner ──────────────────────────────────────────────────────

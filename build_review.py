@@ -23,6 +23,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import base64
 import functools
 import io
@@ -34,9 +35,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+import config
 import issues_store as st
 
-CONFIG_FILE = "config.json"
+from config import CONFIG_FILE
 KEEP_STATUSES = ("accepted", "edited")          # gate-3 outcomes that reach export
 RESOLVED_FRAME = ("selected", "skipped")        # gate-5 outcomes for an anchor
 
@@ -859,21 +861,17 @@ class ReviewHandler(BaseHTTPRequestHandler):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _resolve_issues_path(argv):
-    if len(argv) > 1:
-        return argv[1]
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE) as f:
-            cfg = json.load(f)
-        if cfg.get("issues_path", "").endswith(".json"):
-            return cfg["issues_path"]
-    return "issues.json"
-
-
 def main(argv=None):
     import sys
-    argv = argv if argv is not None else sys.argv
-    issues_path = _resolve_issues_path(argv)
+    argv = argv if argv is not None else sys.argv[1:]
+    p = argparse.ArgumentParser(description="Launch the review console for a session.")
+    p.add_argument("issues", nargs="?", help="issues.json (default: config.issues_path)")
+    p.add_argument("--project", help="project name -> projects/<name>/config.json")
+    p.add_argument("--config", dest="config_path", help="config.json path")
+    args = p.parse_args(argv)
+
+    cfg, _ = config.load_config(project=args.project, config=args.config_path)
+    issues_path = config.resolve_issues_path(args.issues, cfg)
     if not os.path.exists(issues_path):
         raise SystemExit(f"issues.json not found: {issues_path}")
 
@@ -884,10 +882,7 @@ def main(argv=None):
     print(f"Loaded {len(visible_issues(doc))} issues from {issues_path}")
 
     DEFAULT_PORT = 8765
-    port = DEFAULT_PORT
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE) as f:
-            port = json.load(f).get("server_port", DEFAULT_PORT)
+    port = cfg.get("server_port", DEFAULT_PORT)
 
     handler = functools.partial(ReviewHandler, issues_path)
     server = HTTPServer(("localhost", port), handler)

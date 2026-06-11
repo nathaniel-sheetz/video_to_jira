@@ -27,16 +27,16 @@ Usage:
 
 from __future__ import annotations
 
-import json
+import argparse
 import os
 import subprocess
 import sys
 from pathlib import Path
 
+import config
 import issues_store as st
 
-CONFIG_FILE = "config.json"
-DEFAULT_OFFSETS = [0, 2, 5, 10, 20, 30]
+from config import CONFIG_FILE, DEFAULT_OFFSETS
 
 # Tombstones (merged_out) carry no anchors; rejected issues are dead — neither
 # needs frames. Everything a human might still confirm does.
@@ -176,31 +176,24 @@ def extract_all(doc, *, video, frames_root, offsets=None, extract_fn=ffmpeg_extr
 # CLI
 # ---------------------------------------------------------------------------
 
-def _resolve_issues_path(argv):
-    if len(argv) > 1:
-        return argv[1]
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE) as f:
-            cfg = json.load(f)
-        if cfg.get("issues_path", "").endswith(".json"):
-            return cfg["issues_path"]
-    return "issues.json"
-
-
 def main(argv=None):
-    argv = argv if argv is not None else sys.argv
-    issues_path = _resolve_issues_path(argv)
+    argv = argv if argv is not None else sys.argv[1:]
+    p = argparse.ArgumentParser(description="Extract candidate frames into issues.json.")
+    p.add_argument("issues", nargs="?", help="issues.json (default: config.issues_path)")
+    p.add_argument("--project", help="project name -> projects/<name>/config.json")
+    p.add_argument("--config", dest="config_path", help="config.json path")
+    p.add_argument("--force", action="store_true",
+                   help="re-extract frames even if the JPEG already exists")
+    args = p.parse_args(argv)
+
+    cfg, _ = config.load_config(project=args.project, config=args.config_path)
+    issues_path = config.resolve_issues_path(args.issues, cfg)
     if not os.path.exists(issues_path):
         sys.exit(f"issues.json not found: {issues_path}")
 
     doc = st.load(issues_path)
 
-    cfg = {}
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE) as f:
-            cfg = json.load(f)
-
-    # config.json overrides the session's recorded video path (it may be a
+    # config overrides the session's recorded video path (it may be a
     # placeholder in a hand-made fixture); ffmpeg binary likewise.
     video = cfg.get("video_path") or doc.get("session", {}).get("video")
     ffmpeg_bin = cfg.get("ffmpeg_path", "ffmpeg")
@@ -216,7 +209,7 @@ def main(argv=None):
     print(f"  video:  {video}")
     print(f"  frames: {frames_root}/<issue.id>/<anchor.id>/")
     summary = extract_all(doc, video=video, frames_root=frames_root,
-                          extract_fn=extractor)
+                          extract_fn=extractor, force=args.force)
 
     st.save(issues_path, doc)   # atomic + validates the schema before writing
     print(f"\nDone. {summary['anchors']} anchors · "

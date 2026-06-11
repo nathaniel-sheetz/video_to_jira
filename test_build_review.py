@@ -12,7 +12,12 @@ progress state, the action dispatcher, and — per the eng review — a regressi
 test for the /images path-traversal guard.
 """
 
+import json
 import os
+import tempfile
+from unittest.mock import patch
+
+import pytest
 
 import issues_store as st
 import build_review as br
@@ -334,6 +339,98 @@ def test_html_istyping_covers_text_inputs():
     # isTyping must treat INPUT/TEXTAREA/SELECT/contentEditable as 'typing'.
     for token in ("INPUT", "TEXTAREA", "SELECT", "isContentEditable"):
         assert token in br.HTML, f"isTyping no longer guards {token}"
+
+
+# ── main() CLI wiring ──────────────────────────────────────────────────────
+
+def _minimal_doc():
+    return {
+        "schema_version": 2,
+        "session": {"id": "s", "generated_at": "2026-01-01T00:00:00Z"},
+        "issues": [],
+    }
+
+
+def test_main_project_flag_loads_project_config():
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            proj_dir = os.path.join("projects", "br-test")
+            os.makedirs(proj_dir)
+            issues_path = os.path.join(proj_dir, "issues.json")
+            st.save(issues_path, _minimal_doc())
+            with open(os.path.join(proj_dir, "config.json"), "w", encoding="utf-8") as f:
+                json.dump({"issues_path": issues_path, "server_port": 19876}, f)
+            with patch("build_review.HTTPServer") as mock_server, \
+                 patch("build_review.threading"), \
+                 patch("build_review.webbrowser"):
+                mock_server.return_value.serve_forever.side_effect = KeyboardInterrupt
+                br.main(["--project", "br-test"])
+                assert mock_server.called
+        finally:
+            os.chdir(cwd)
+
+
+def test_main_config_flag_loads_explicit_config():
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            issues_path = os.path.join(d, "issues.json")
+            st.save(issues_path, _minimal_doc())
+            cfg_path = os.path.join(d, "explicit.json")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({"issues_path": issues_path, "server_port": 19877}, f)
+            with patch("build_review.HTTPServer") as mock_server, \
+                 patch("build_review.threading"), \
+                 patch("build_review.webbrowser"):
+                mock_server.return_value.serve_forever.side_effect = KeyboardInterrupt
+                br.main(["--config", cfg_path])
+                assert mock_server.called
+        finally:
+            os.chdir(cwd)
+
+
+def test_main_server_port_from_config():
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            issues_path = os.path.join(d, "issues.json")
+            st.save(issues_path, _minimal_doc())
+            cfg_path = os.path.join(d, "cfg.json")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({"issues_path": issues_path, "server_port": 12345}, f)
+            with patch("build_review.HTTPServer") as mock_server, \
+                 patch("build_review.threading"), \
+                 patch("build_review.webbrowser"):
+                mock_server.return_value.serve_forever.side_effect = KeyboardInterrupt
+                br.main(["--config", cfg_path])
+            host, port = mock_server.call_args[0][0]
+            assert port == 12345
+        finally:
+            os.chdir(cwd)
+
+
+def test_main_exits_when_issues_not_found():
+    with patch("build_review.HTTPServer"):
+        with pytest.raises(SystemExit) as exc:
+            br.main(["--config", "does_not_exist_xyz.json"])
+        assert "issues.json not found" in str(exc.value)
+
+
+def test_main_exits_when_issues_invalid():
+    with tempfile.TemporaryDirectory() as d:
+        bad_path = os.path.join(d, "issues.json")
+        with open(bad_path, "w", encoding="utf-8") as f:
+            json.dump({"schema_version": 1}, f)
+        cfg_path = os.path.join(d, "cfg.json")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump({"issues_path": bad_path}, f)
+        with pytest.raises(SystemExit) as exc:
+            br.main(["--config", cfg_path])
+        assert "invalid" in str(exc.value).lower()
 
 
 # ── standalone runner ──────────────────────────────────────────────────────
