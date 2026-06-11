@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2.0] - 2026-06-11
+
+### Added
+- **Project-scoped sessions**: All five pipeline stages (`build_review`, `extract_frames`, `extract_issues`, `generate_pptx`, `html_export`) now accept `--project <name>` and `--config <path>` flags. `--project` is sugar for `projects/<name>/config.json`, eliminating the previous workflow of manually copying a project config over the repo-root `config.json`.
+- **`config.py`**: New shared module for config resolution (`resolve_config_path`, `load_config`, `resolve_issues_path`, `DEFAULT_OFFSETS`). Replaces four independent copies of the same `_resolve_issues_path` pattern and the hardcoded `CONFIG_FILE = "config.json"` in every stage.
+- **`server_port` config key**: `build_review` now reads `server_port` from `config.json` (falls back to 8765), so different projects can bind to different ports without flag arguments.
+
 ## [0.1.1.0] - 2026-06-06
 
 ### Added
