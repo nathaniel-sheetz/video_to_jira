@@ -879,7 +879,7 @@ def main(argv=None):
     errs = st.validate(doc)
     if errs:
         raise SystemExit("issues.json is invalid:\n  - " + "\n  - ".join(errs))
-    print(f"Loaded {len(visible_issues(doc))} issues from {issues_path}")
+    print(f"Loaded {len(visible_issues(doc))} issues from {issues_path}", flush=True)
 
     DEFAULT_PORT = 8765
     port = cfg.get("server_port", DEFAULT_PORT)
@@ -887,7 +887,9 @@ def main(argv=None):
     handler = functools.partial(ReviewHandler, issues_path)
     server = HTTPServer(("localhost", port), handler)
     url = f"http://localhost:{port}"
-    print(f"Review console at {url}\nPress Ctrl+C to stop.\n")
+    # flush: under a background/non-TTY launch stdout is block-buffered, so
+    # without this the URL never appears until the server exits.
+    print(f"Review console at {url}\nPress Ctrl+C to stop.\n", flush=True)
     threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()

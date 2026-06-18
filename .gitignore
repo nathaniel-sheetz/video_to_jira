@@ -10,3 +10,8 @@ config.json
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Local Claude Code config: ignore everything under .claude/ (settings, plans,
+# etc.) except the shared skills, which are part of the pipeline.
+.claude/*
+!.claude/skills/

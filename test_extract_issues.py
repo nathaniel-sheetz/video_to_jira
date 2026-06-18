@@ -433,6 +433,23 @@ def test_main_project_flag_resolves_config_path():
             os.chdir(cwd)
 
 
+def test_main_project_flag_after_subcommand_resolves_config_path():
+    # --project may follow the subcommand too: `assemble ... --project NAME`.
+    # Regression for the arg-order footgun (top-level-only flag failed there).
+    with tempfile.TemporaryDirectory() as d:
+        cand_path = os.path.join(d, "candidates.json")
+        out_path = os.path.join(d, "issues.json")
+        with open(cand_path, "w", encoding="utf-8") as f:
+            json.dump([_cand(title="Wrong status badge", sev="S1",
+                             anchors=[{"caption": "status",
+                                       "quote": "this should be showing as a planned event"}])],
+                      f)
+        # Flag placed AFTER the subcommand and its positionals.
+        ex.main(["assemble", cand_path, REAL_TRANSCRIPT, "--out", out_path,
+                 "--config", os.path.join(d, "nope.json")])
+        assert st.load(out_path)["issues"][0]["anchors"][0]["ts_seconds"] == 319
+
+
 def test_resolve_transcript_no_arg_no_config_exits():
     try:
         ex._resolve_transcript(None, {})

@@ -70,6 +70,84 @@ def test_default_offsets_is_shared_list():
 
 
 # ---------------------------------------------------------------------------
+# Scaffolding a fresh project's config.json
+# ---------------------------------------------------------------------------
+
+def _project_with_video(root, name, videos=("clip.mp4",)):
+    """Create projects/<name>/input/ under `root` with the given video files."""
+    input_dir = os.path.join(root, "projects", name, "input")
+    os.makedirs(input_dir)
+    for v in videos:
+        open(os.path.join(input_dir, v), "w").close()
+    return input_dir
+
+
+def test_scaffold_config_writes_template_from_detected_video():
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            _project_with_video(d, "p1")
+            path, cfg = config.scaffold_config("p1")
+            assert path == os.path.join("projects", "p1", "config.json")
+            # Values use forward slashes regardless of host OS.
+            assert cfg["video_path"] == "projects/p1/input/clip.mp4"
+            assert cfg["issues_path"] == "projects/p1/issues.json"
+            assert cfg["frames_root"] == "projects/p1/frames"
+            assert cfg["frame_offsets_seconds"] == config.DEFAULT_OFFSETS
+            assert cfg["server_port"] == 8765
+            # And it's the file we actually wrote.
+            on_disk, _ = config.load_config(project="p1")
+            assert on_disk == cfg
+        finally:
+            os.chdir(cwd)
+
+
+def test_scaffold_config_refuses_overwrite_without_force():
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            _project_with_video(d, "p2")
+            config.scaffold_config("p2")
+            try:
+                config.scaffold_config("p2")
+                assert False, "expected FileExistsError"
+            except FileExistsError:
+                pass
+            # force overwrites.
+            _, cfg = config.scaffold_config("p2", force=True)
+            assert cfg["video_path"] == "projects/p2/input/clip.mp4"
+        finally:
+            os.chdir(cwd)
+
+
+def test_scaffold_config_errors_on_zero_or_multiple_videos():
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        os.chdir(d)
+        try:
+            os.makedirs(os.path.join(d, "projects", "empty", "input"))
+            try:
+                config.scaffold_config("empty")
+                assert False, "expected FileNotFoundError for no video"
+            except FileNotFoundError:
+                pass
+            _project_with_video(d, "many", videos=("a.mp4", "b.mov"))
+            try:
+                config.scaffold_config("many")
+                assert False, "expected ValueError for multiple videos"
+            except ValueError:
+                pass
+            # An explicit --video disambiguates the multi-video case.
+            _, cfg = config.scaffold_config(
+                "many", video="projects/many/input/b.mov")
+            assert cfg["video_path"] == "projects/many/input/b.mov"
+        finally:
+            os.chdir(cwd)
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner (no pytest required)
 # ---------------------------------------------------------------------------
 
