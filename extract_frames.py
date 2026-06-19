@@ -212,8 +212,8 @@ def main(argv=None):
                           extract_fn=extractor, force=args.force)
 
     st.save(issues_path, doc)   # atomic + validates the schema before writing
-    print(f"\nDone. {summary['anchors']} anchors · "
-          f"{summary['frames_extracted']} extracted · "
+    print(f"\nDone. {summary['anchors']} anchors | "
+          f"{summary['frames_extracted']} extracted | "
           f"{summary['frames_skipped']} skipped (offsets {summary['offsets']}).")
 
 

@@ -512,12 +512,20 @@ def _cmd_assemble(args):
           f"(validated through issues_store).")
 
 
+def _add_config_args(p, *, suppress=False):
+    """Attach --config/--project. On subparsers use suppress=True so an absent
+    flag leaves the top-level value alone instead of resetting it to None
+    (lets the flags work either before OR after the subcommand)."""
+    default = argparse.SUPPRESS if suppress else None
+    p.add_argument("--config", default=default,
+                   help="config.json (paths, offsets). Default: config.json")
+    p.add_argument("--project", default=default,
+                   help="project name -> projects/<name>/config.json")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default=None,
-                        help="config.json (paths, offsets). Default: config.json")
-    parser.add_argument("--project",
-                        help="project name -> projects/<name>/config.json")
+    _add_config_args(parser)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     pw = sub.add_parser("windows", help="dump pass-1 windows for the agent to read")
@@ -525,6 +533,7 @@ def main(argv=None):
     pw.add_argument("--size", type=int, default=DEFAULT_WINDOW_SIZE)
     pw.add_argument("--overlap", type=int, default=DEFAULT_WINDOW_OVERLAP)
     pw.add_argument("--text", action="store_true", help="human-readable, not JSON")
+    _add_config_args(pw, suppress=True)
     pw.set_defaults(func=_cmd_windows)
 
     pa = sub.add_parser("assemble",
@@ -532,6 +541,7 @@ def main(argv=None):
     pa.add_argument("candidates", help="JSON: a candidate list or {session,issues}")
     pa.add_argument("transcript", nargs="?", help="transcript .txt (default: config)")
     pa.add_argument("--out", help="output path (default: config.issues_path)")
+    _add_config_args(pa, suppress=True)
     pa.set_defaults(func=_cmd_assemble)
 
     args = parser.parse_args(argv)
