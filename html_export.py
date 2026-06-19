@@ -193,7 +193,7 @@ def render_html(doc, embed_fn=embed_image):
             f'<div class="facets">{facets}</div></div></article>'
         )
 
-    parts.append("</body></html>")
+    parts.append(_FOOT)
     return "\n".join(parts)
 
 
@@ -244,9 +244,31 @@ article{background:#fff;border:1px solid #e2e4e8;border-radius:10px;padding:22px
 .facets{display:flex;flex-wrap:wrap;gap:16px}
 .facet{flex:1;min-width:260px;max-width:440px}
 .fcap{font-size:12px;color:#444;margin-bottom:5px}
-.shot{width:100%;border:1px solid #d6d8dd;border-radius:6px;display:block}
+.shot{width:100%;border:1px solid #d6d8dd;border-radius:6px;display:block;cursor:zoom-in}
 .noshot{font-size:12px;color:#999;padding:18px;border:1px dashed #d6d8dd;border-radius:6px;text-align:center}
+/* click-to-zoom lightbox */
+#lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:1000;align-items:center;justify-content:center;padding:24px;cursor:zoom-out}
+#lightbox.open{display:flex}
+#lightbox img{max-width:95vw;max-height:95vh;border-radius:6px;box-shadow:0 8px 40px rgba(0,0,0,.6)}
 </style></head><body>"""
+
+
+# A click-to-zoom overlay: one shared element + a delegated listener, so the
+# per-screenshot markup (class="shot") stays untouched and the output stays
+# deterministic. Each image is still embedded once — the overlay reuses its src.
+_FOOT = """<div id="lightbox" aria-hidden="true"><img alt="expanded screenshot"></div>
+<script>
+(function(){
+  var lb=document.getElementById('lightbox'),img=lb.firstElementChild;
+  document.addEventListener('click',function(e){
+    if(e.target.classList.contains('shot')){img.src=e.target.src;lb.classList.add('open');}
+    else if(lb.classList.contains('open')){lb.classList.remove('open');img.removeAttribute('src');}
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape')lb.classList.remove('open');});
+})();
+</script>
+</body></html>"""
 
 
 # ---------------------------------------------------------------------------
